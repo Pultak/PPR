@@ -7,6 +7,7 @@
 #include <sstream>
 #include <iomanip>
 #include <ppl.h>
+#include <limits>
 #include "Preprocessor.h"
 #include "../consts.h"
 
