@@ -134,7 +134,7 @@ int main(int argc, char* argv[]) {
     auto input = std::make_shared<input_data>();
 
     //todo folder from parameter
-    if(!preprocessor.load_and_preprocess("002", input)){
+    if(!preprocessor.load_and_preprocess_folder("002")){
         return EXIT_FAILURE;
     }
 

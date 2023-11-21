@@ -9,7 +9,10 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <map>
 
+
+typedef std::map<std::string, std::pair<std::string, std::string>> directory_map;
 
 struct input_vector{
     std::vector<double> values;
@@ -27,6 +30,9 @@ struct input_data{
     time_t first_hr_time = 0;
 };
 
+enum file_type{
+    NOT_DATA_FILE, HR_DATA_FILE, ACC_DATA_FILE
+};
 
 class Preprocessor {
 
@@ -35,8 +41,8 @@ private:
 
 
 public:
-    bool load_and_preprocess(const std::string& input_folder, const std::shared_ptr<input_data>& result);
-    void load_and_preprocess_folder(char input_folder[]);
+    bool load_and_preprocess(std::string& hr_file, std::string& acc_file, const std::shared_ptr<input_data>& result);
+    bool load_and_preprocess_folder(const std::string& input_folder, const std::shared_ptr<input_data> &result);
 
 
 private:
@@ -52,7 +58,9 @@ private:
 
     void load_hr_file_content(const std::shared_ptr<input_data> &result, std::ifstream &file) const;
 
-    static void find_min_max(const std::unique_ptr<input_vector> &input) ;
+    static void find_min_max(const std::unique_ptr<input_vector> &input);
+
+    static void collect_directory_data_files_entries(const std::filesystem::path& root_path, directory_map& folder_map);
 };
 
 

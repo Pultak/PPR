@@ -13,11 +13,8 @@
 #include "Preprocessor.h"
 #include "../consts.h"
 
-bool Preprocessor::load_and_preprocess(const std::string& input_folder, const std::shared_ptr<input_data>& result) {
 
-    //todo path should be accessible from everywhere
-    std::string hr_file("HR_" + input_folder + ".csv");
-    std::string acc_file("ACC_" + input_folder + ".csv");
+bool Preprocessor::load_and_preprocess(std::string& hr_file, std::string& acc_file, const std::shared_ptr<input_data>& result) {
 
     bool read_ok = read_file_content( hr_file, 0, result) &&
             read_file_content( acc_file, result->first_hr_time, result);
@@ -30,52 +27,77 @@ bool Preprocessor::load_and_preprocess(const std::string& input_folder, const st
     return true;
 }
 
-void Preprocessor::load_and_preprocess_folder(char input_folder[]) {
-    //todo walk though folders
+bool Preprocessor::load_and_preprocess_folder(const std::string& input_folder, const std::shared_ptr<input_data> &result) {
+    directory_map directories {};
+    collect_directory_data_files_entries(input_folder, directories);
+    std::cout << "Loaded total of " << directories.size() << " directories!" << std::endl;
+    //todo
+    for (const auto& data_entry: directories) {
+        //todo local result and then merge
+        if(!load_and_preprocess(data_entry.first, data_entry.second, result)){
+            return false;
+        }
+    }
+    return true;
 }
 
 
-bool is_data_file(const std::string& file_name){
-    return file_name.compare(0, 3, "HR_") == 0 || file_name.compare(0, 4, "ACC_") == 0;
+file_type is_data_file(const std::string& file_name){
+    if(file_name.compare(0, 3, "HR_") == 0){
+        return file_type::HR_DATA_FILE;
+    }else if(file_name.compare(0, 4, "ACC_") == 0){
+        return file_type::ACC_DATA_FILE;
+    }
+    return file_type::NOT_DATA_FILE;
 }
 
-void traverseDirectory(const std::filesystem::path& rootPath) {
-    std::map<std::string, std::pair<std::string, std::string>> folderMap {};
+void Preprocessor::collect_directory_data_files_entries(const std::filesystem::path& root_path, directory_map& folder_map) {
     std::stack<std::filesystem::path> pathStack;
-    pathStack.push(rootPath);
+    pathStack.push(root_path);
 
     while (!pathStack.empty()) {
         std::filesystem::path currentPath = pathStack.top();
         pathStack.pop();
 
-        try {
-            for (const auto& entry: std::filesystem::directory_iterator(currentPath)) {
-                if (entry.is_directory()) {
-                    std::cout << "Folder: " << entry.path() << "\n"; //todo comment
-                    pathStack.push(entry.path());
-                } else if (entry.is_regular_file()) {
-                    std::cout << "File: " << entry.path() << "\n";
-                    const auto& file_path = entry.path();
-                    auto parent_folder_name = file_path.parent_path().filename().string();
-                    if(!is_data_file(file_path.string())){
-                        continue;
-                    }
-                    //todo do I need to check file
-                    if(file_path.filename().string() == ""){
-
-                    }
-                    if(folderMap.find(parent_folder_name) != folderMap.end()){
-
-                        folderMap[parent_folder_name] = std::make_pair("", "");
-                    }
+//        try {
+        for (const auto& entry: std::filesystem::directory_iterator(currentPath)) {
+            if (entry.is_directory()) {
+                std::cout << "Folder: " << entry.path() << "\n"; //todo comment
+                pathStack.push(entry.path());
+            } else if (entry.is_regular_file()) {
+                std::cout << "File: " << entry.path() << "\n";
+                const auto& file_path = entry.path();
+                auto parent_folder_name = file_path.parent_path().filename().string();
+                auto file_type = is_data_file(file_path.string());
+                if(file_type == file_type::NOT_DATA_FILE){
+                    continue;
+                }
+                //todo do I need to check if file has good suffix (.._folderName)
+//                    if(file_path.filename().string() == ""){
+//
+//                    }
+                if(folder_map.find(parent_folder_name) != folder_map.end()){
+                    folder_map[parent_folder_name] = std::make_pair("", "");
+                }
+                switch (file_type) {
+                    case HR_DATA_FILE:
+                        folder_map[parent_folder_name].first = file_path.string();
+                        break;
+                    case ACC_DATA_FILE:
+                        folder_map[parent_folder_name].second = file_path.string();
+                        break;
+                    case NOT_DATA_FILE:
+                    default:
+                        std::cerr << "Unknown error occurred during directory traversing." << std::endl;
+                        break;
                 }
             }
-        } catch (const std::exception& e) {
-            std::cerr << "Error: " << e.what() << "\n"; //todo better exception handling
         }
+//        } catch (const std::exception& e) {
+//            std::cerr << "Error: " << e.what() << "\n"; //todo better exception handling
+//        }
     }
 }
-
 
 
 bool Preprocessor::read_file_content(const std::string& input_file, time_t hr_begin_time, const std::shared_ptr<input_data> &result) {
