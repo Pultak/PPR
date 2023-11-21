@@ -22,15 +22,39 @@ struct genome{
 class CalculationScheduler {
 
 public:
+
+    CalculationScheduler(const std::shared_ptr<input_data>& input);
+    ~CalculationScheduler();
+
+
     //todo input parameters from args
-    std::unique_ptr<genome> find_transformation_function(std::unique_ptr<input_vector>& input);
+    std::unique_ptr<genome> find_transformation_function();
 
 
     std::vector<genome> init_population();
 
-    double check_correlation(std::vector<genome> population, size_t &best_index);
+    double check_correlation(const std::vector<genome>& population, size_t &best_index);
 
-    std::vector<genome> repopulate(const std::vector<genome>& old_population);
+    std::vector<genome> repopulate(const std::vector<genome>& old_population, genome& best_genome);
+
+private:
+
+    const std::shared_ptr<input_data> input;
+    double* transformation_result;
+    double* corr_result;
+
+    double hr_sum;
+    double squared_hr_corr_sum;
+
+    std::mt19937 corr_value_generator{69}; // todo seed from parameter
+    std::uniform_real_distribution<> corr_uniform_real_distribution{0, 1};
+
+private:
+
+    void transform(const genome& genome1);
+    void calculate_hr_init_data();
+
+    const genome* get_parent(const std::vector<genome> &vector, size_t &last_index);
 };
 
 

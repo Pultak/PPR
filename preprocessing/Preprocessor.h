@@ -35,24 +35,24 @@ private:
 
 
 public:
-    bool load_and_preprocess(const std::string& input_folder, std::unique_ptr<input_data> &result);
+    bool load_and_preprocess(const std::string& input_folder, const std::shared_ptr<input_data>& result);
     void load_and_preprocess_folder(char input_folder[]);
 
 
 private:
-    bool read_file_content(const std::string& input_file, time_t hr_begin_time, std::unique_ptr<input_data> &result);
+    bool read_file_content(const std::string& input_file, time_t hr_begin_time, const std::shared_ptr<input_data> &result);
 
-    void filter_input_data(std::unique_ptr<input_data> &inputData);
+    void filter_input_data(const std::shared_ptr<input_data> &inputData);
 
-    static void normalize_data(std::unique_ptr<input_data> &data);
+    static void normalize_data(const std::shared_ptr<input_data> &data);
 
     void skip_past_entries(time_t hr_begin_time, std::ifstream &file, std::string &result_line, time_t &previous_time) const;
 
-    void load_acc_file_content(time_t hr_begin_time, std::unique_ptr<input_data> &result, std::ifstream &file) const;
+    void load_acc_file_content(time_t hr_begin_time, const std::shared_ptr<input_data> &result, std::ifstream &file) const;
 
-    void load_hr_file_content(std::unique_ptr<input_data> &result, std::ifstream &file) const;
+    void load_hr_file_content(const std::shared_ptr<input_data> &result, std::ifstream &file) const;
 
-    static void find_min_max(std::unique_ptr<input_vector>& input) ;
+    static void find_min_max(const std::unique_ptr<input_vector> &input) ;
 };
 
 

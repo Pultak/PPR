@@ -2,6 +2,7 @@
 #include <fstream>
 #include "computation/gpu/opencl_utils.h"
 #include "preprocessing/Preprocessor.h"
+#include "computation/CalculationScheduler.h"
 #include <vector>
 
 #include <windows.h>
@@ -130,10 +131,16 @@ int main(int argc, char* argv[]) {
     //todo parser of input parameters
     Preprocessor preprocessor {};
 
-    auto input = std::make_unique<input_data>();
+    auto input = std::make_shared<input_data>();
+
+    //todo folder from parameter
     if(!preprocessor.load_and_preprocess("002", input)){
         return EXIT_FAILURE;
     }
+
+    //todo input parameter choose from serial or parallel
+    CalculationScheduler scheduler{input};
+    find_transformation_function()
 
 
     return EXIT_SUCCESS;

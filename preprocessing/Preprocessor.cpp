@@ -8,10 +8,12 @@
 #include <iomanip>
 #include <ppl.h>
 #include <limits>
+#include <filesystem>
+#include <stack>
 #include "Preprocessor.h"
 #include "../consts.h"
 
-bool Preprocessor::load_and_preprocess(const std::string& input_folder, std::unique_ptr<input_data> &result) {
+bool Preprocessor::load_and_preprocess(const std::string& input_folder, const std::shared_ptr<input_data>& result) {
 
     //todo path should be accessible from everywhere
     std::string hr_file("HR_" + input_folder + ".csv");
@@ -32,12 +34,56 @@ void Preprocessor::load_and_preprocess_folder(char input_folder[]) {
     //todo walk though folders
 }
 
-bool Preprocessor::read_file_content(const std::string& input_file, time_t hr_begin_time, std::unique_ptr<input_data> &result) {
+
+bool is_data_file(const std::string& file_name){
+    return file_name.compare(0, 3, "HR_") == 0 || file_name.compare(0, 4, "ACC_") == 0;
+}
+
+void traverseDirectory(const std::filesystem::path& rootPath) {
+    std::map<std::string, std::pair<std::string, std::string>> folderMap {};
+    std::stack<std::filesystem::path> pathStack;
+    pathStack.push(rootPath);
+
+    while (!pathStack.empty()) {
+        std::filesystem::path currentPath = pathStack.top();
+        pathStack.pop();
+
+        try {
+            for (const auto& entry: std::filesystem::directory_iterator(currentPath)) {
+                if (entry.is_directory()) {
+                    std::cout << "Folder: " << entry.path() << "\n"; //todo comment
+                    pathStack.push(entry.path());
+                } else if (entry.is_regular_file()) {
+                    std::cout << "File: " << entry.path() << "\n";
+                    const auto& file_path = entry.path();
+                    auto parent_folder_name = file_path.parent_path().filename().string();
+                    if(!is_data_file(file_path.string())){
+                        continue;
+                    }
+                    //todo do I need to check file
+                    if(file_path.filename().string() == ""){
+
+                    }
+                    if(folderMap.find(parent_folder_name) != folderMap.end()){
+
+                        folderMap[parent_folder_name] = std::make_pair("", "");
+                    }
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << "\n"; //todo better exception handling
+        }
+    }
+}
+
+
+
+bool Preprocessor::read_file_content(const std::string& input_file, time_t hr_begin_time, const std::shared_ptr<input_data> &result) {
     std::ifstream file(input_file);
 
     if (file.is_open()) {
         if(hr_begin_time){
-            //hr_begin_time is not 0 so we are loading acc file
+            //hr_begin_time is not 0, so we are loading acc file
             load_acc_file_content(hr_begin_time, result, file);
         }else{
             load_hr_file_content(result, file);
@@ -51,7 +97,7 @@ bool Preprocessor::read_file_content(const std::string& input_file, time_t hr_be
     }
 }
 
-void Preprocessor::load_hr_file_content(std::unique_ptr<input_data> &result, std::ifstream &file) const {
+void Preprocessor::load_hr_file_content(const std::shared_ptr<input_data> &result, std::ifstream &file) const {
     auto& hr_input = result->hr->values;
     std::string line;
 
@@ -82,7 +128,7 @@ void Preprocessor::load_hr_file_content(std::unique_ptr<input_data> &result, std
     result->entries_count = count;
 }
 
-void Preprocessor::load_acc_file_content(time_t hr_begin_time, std::unique_ptr<input_data> &result,
+void Preprocessor::load_acc_file_content(time_t hr_begin_time, const std::shared_ptr<input_data> &result,
                                          std::ifstream &file) const {
     auto& x_input = result->acc_x->values;
     auto& y_input = result->acc_y->values;
@@ -140,23 +186,23 @@ void Preprocessor::skip_past_entries(time_t hr_begin_time, std::ifstream &file, 
 
         std::stringstream ss(date);
         ss >> std::get_time(&tm, time_format);
-        time_t mktim = mktime(&tm);
-        if(mktim < hr_begin_time){
+        time_t time = mktime(&tm);
+        if(time < hr_begin_time){
             continue;
         }else{
-            previous_time = mktim;
+            previous_time = time;
             result_line = line;
             break;
         }
     }
 }
 
-void Preprocessor::filter_input_data(std::unique_ptr<input_data> &inputData) {
+void Preprocessor::filter_input_data(const std::shared_ptr<input_data> &inputData) {
     //difftime returns seconds
     double diff_minutes = difftime(inputData->first_hr_time, inputData->first_acc_time) / 60;
     auto del_entries_count = (int) abs(diff_minutes);
 
-    std::vector<double> &hr_input = inputData->hr.values;
+    std::vector<double> &hr_input = inputData->hr->values;
     if(del_entries_count > 0){
         //remove hr entries that are before acc values
         hr_input.erase(hr_input.begin(), hr_input.begin() + del_entries_count);
@@ -165,9 +211,9 @@ void Preprocessor::filter_input_data(std::unique_ptr<input_data> &inputData) {
 
     uint8_t size_remainder = inputData->entries_count % VECTOR_SIZE;
     if(size_remainder != 0){
-        std::vector<double> &acc_x = inputData->acc_x.values;
-        std::vector<double> &acc_y = inputData->acc_y.values;
-        std::vector<double> &acc_z = inputData->acc_z.values;
+        std::vector<double> &acc_x = inputData->acc_x->values;
+        std::vector<double> &acc_y = inputData->acc_y->values;
+        std::vector<double> &acc_z = inputData->acc_z->values;
 
         hr_input.erase(hr_input.end() - size_remainder, hr_input.end());
         acc_x.erase(acc_x.end() - size_remainder, acc_x.end());
@@ -178,8 +224,8 @@ void Preprocessor::filter_input_data(std::unique_ptr<input_data> &inputData) {
     }
 }
 
-void Preprocessor::normalize_data(std::unique_ptr<input_data> &data) {
-    auto& input = data->hr;
+void Preprocessor::normalize_data(const std::shared_ptr<input_data> &data) {
+    const auto& input = data->hr;
     find_min_max(data->acc_x);
     find_min_max(data->acc_y);
     find_min_max(data->acc_z);
@@ -193,7 +239,7 @@ void Preprocessor::normalize_data(std::unique_ptr<input_data> &data) {
     });
 }
 
-void Preprocessor::find_min_max(std::unique_ptr<input_vector>& input) {
+void Preprocessor::find_min_max(const std::unique_ptr<input_vector> &input) {
     double min_value = std::numeric_limits<double>::max();
     double max_value = std::numeric_limits<double>::min();
     concurrency::parallel_for_each(begin(input->values), end(input->values), [&](double value){
