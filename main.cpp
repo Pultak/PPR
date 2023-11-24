@@ -134,13 +134,13 @@ int main(int argc, char* argv[]) {
     auto input = std::make_shared<input_data>();
 
     //todo folder from parameter
-    if(!preprocessor.load_and_preprocess_folder("002")){
+    if(!preprocessor.load_and_preprocess_folder(R"(c:\Users\pulta\OneDrive\Plocha\School\N\5\PPR\data\big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.2\001\)", input)){
         return EXIT_FAILURE;
     }
 
     //todo input parameter choose from serial or parallel
     CalculationScheduler scheduler{input};
-    find_transformation_function()
+    scheduler.find_transformation_function();
 
 
     return EXIT_SUCCESS;

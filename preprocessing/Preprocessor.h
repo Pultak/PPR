@@ -10,21 +10,27 @@
 #include <string>
 #include <memory>
 #include <map>
+#include <filesystem>
+#include <random>
 
 
 typedef std::map<std::string, std::pair<std::string, std::string>> directory_map;
 
 struct input_vector{
+
     std::vector<double> values;
-    double min;
-    double max;
+    double min = DBL_MIN;
+    double max = DBL_MAX;
+
+    explicit input_vector(uintmax_t value_count): values(value_count){
+    }
 };
 
 struct input_data{
-    std::unique_ptr<input_vector> acc_x = std::make_unique<input_vector>();
-    std::unique_ptr<input_vector> acc_y = std::make_unique<input_vector>();
-    std::unique_ptr<input_vector> acc_z = std::make_unique<input_vector>();
-    std::unique_ptr<input_vector> hr = std::make_unique<input_vector>();
+    std::unique_ptr<input_vector> acc_x = nullptr;
+    std::unique_ptr<input_vector> acc_y = nullptr;
+    std::unique_ptr<input_vector> acc_z = nullptr;
+    std::unique_ptr<input_vector> hr = nullptr;
     size_t entries_count = 0;
     time_t first_acc_time = 0;
     time_t first_hr_time = 0;
@@ -46,13 +52,13 @@ public:
 
 
 private:
-    bool read_file_content(const std::string& input_file, time_t hr_begin_time, const std::shared_ptr<input_data> &result);
+    bool read_file_content(std::string& input_file, time_t hr_begin_time, const std::shared_ptr<input_data> &result, size_t vector_size);
 
     void filter_input_data(const std::shared_ptr<input_data> &inputData);
 
     static void normalize_data(const std::shared_ptr<input_data> &data);
 
-    void skip_past_entries(time_t hr_begin_time, std::ifstream &file, std::string &result_line, time_t &previous_time) const;
+    void skip_past_entries(time_t hr_begin_time, std::stringstream &file, std::string &result_line, time_t &previous_time) const;
 
     void load_acc_file_content(time_t hr_begin_time, const std::shared_ptr<input_data> &result, std::ifstream &file) const;
 
@@ -61,6 +67,8 @@ private:
     static void find_min_max(const std::unique_ptr<input_vector> &input);
 
     static void collect_directory_data_files_entries(const std::filesystem::path& root_path, directory_map& folder_map);
+
+    static size_t get_data_vector_needed_size(std::string& input_file);
 };
 
 
