@@ -8,6 +8,7 @@
 
 #include <memory>
 #include "../preprocessing/Preprocessor.h"
+#include "../utils.h"
 #include <array>
 
 
@@ -16,38 +17,39 @@ const size_t GENOME_POW_SIZE = 4;
 
 struct genome{
     std::array<double, GENOME_CONSTANTS_SIZE> constants {};
-    std::array<int, GENOME_POW_SIZE> powers {};
+    std::array<uint8_t, GENOME_POW_SIZE> powers {};
 };
 
 class CalculationScheduler {
 
 public:
 
-    CalculationScheduler(const std::shared_ptr<input_data>& input);
+    CalculationScheduler(const std::shared_ptr<input_data>& input, const input_parameters& input_params);
     ~CalculationScheduler();
 
-
     //todo input parameters from args
-    std::unique_ptr<genome> find_transformation_function();
+    double find_transformation_function(genome& best_genome);
 
-
-    std::vector<genome> init_population();
+    void init_population(std::vector<genome>& init_population) const;
 
     double check_correlation(const std::vector<genome>& population, size_t &best_index);
 
-    std::vector<genome> repopulate(const std::vector<genome>& old_population, genome& best_genome);
+    void repopulate(const std::vector<genome>& old_population, std::vector<genome>& new_population,
+                                   genome& best_genome);
 
 private:
 
     const std::shared_ptr<input_data> input;
-    double* transformation_result;
-    double* corr_result;
+    std::vector<double> transformation_result;
+    std::vector<double> corr_result;
 
-    double hr_sum;
-    double squared_hr_corr_sum;
+    double hr_sum = 0;
+    double squared_hr_corr_sum = 0;
 
-    std::mt19937 corr_value_generator{69}; // todo seed from parameter
+    std::mt19937 corr_value_generator;
     std::uniform_real_distribution<> corr_uniform_real_distribution{0, 1};
+
+    const input_parameters input_params;
 
 private:
 

@@ -22,7 +22,16 @@ __int64 time_call(Function&& f)
 const size_t VECTOR_SIZE = 16;
 
 
+struct input_parameters{
+    const size_t max_step_count = 50;
+    const size_t population_size = 100; //todo population size is raped to fit vectorization needs
+    const size_t seed = 69; //todo actual time as seed to be random
 
+    const double desired_correlation = 0.9; //todo do check to have it from 0-1
+
+    const double const_scope = 1000.0;
+    const int pow_scope = 5;
+};
 
 
 #endif //OCL_TEST_UTILS_H

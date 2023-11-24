@@ -1,29 +1,16 @@
 #include <iostream>
 #include <fstream>
-#include "computation/gpu/opencl_utils.h"
 #include "preprocessing/Preprocessor.h"
 #include "computation/CalculationScheduler.h"
-#include <vector>
 
 #include <windows.h>
 #include <ppl.h>
-#include <iostream>
 #include <algorithm>
 #include <array>
 #include <valarray>
 
 using namespace concurrency;
 using namespace std;
-
-//todo remove
-// Returns the number of milliseconds that it takes to call the passed in function.
-template <class Function>
-__int64 time_call(Function&& f)
-{
-    __int64 begin = GetTickCount();
-    f();
-    return GetTickCount() - begin;
-}
 
 int createSVG(){
     // Open an output file for writing
@@ -128,7 +115,9 @@ void doParallelCalc(){
 
 int main(int argc, char* argv[]) {
 
-    //todo parser of input parameters
+    //todo input parameter choose from serial or parallel
+    input_parameters params {}; //todo init from args
+
     Preprocessor preprocessor {};
 
     auto input = std::make_shared<input_data>();
@@ -138,10 +127,20 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    //todo input parameter choose from serial or parallel
-    CalculationScheduler scheduler{input};
-    scheduler.find_transformation_function();
+    std::cout << "-------------------------------" << std::endl << std::endl;
 
+    CalculationScheduler scheduler{input, params};
+    genome best_genome{};
+    auto max_corr = scheduler.find_transformation_function(best_genome);
+//    auto max_corr = 0.5;
 
+    std::cout << "The best correlation found: " << max_corr << std::endl;
+
+    auto& c = best_genome.constants;
+    auto& p = best_genome.powers;
+    std::cout << "Best polynomial: "    << c[0] << "x^" << (int)p[0] << " + "
+                                        << c[1] << "y^" << (int)p[1] << " + "
+                                        << c[2] << "z^" << (int)p[2] << " + "
+                                        << c[3];
     return EXIT_SUCCESS;
 }
