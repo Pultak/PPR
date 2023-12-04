@@ -10,6 +10,7 @@
 #include "../preprocessing/Preprocessor.h"
 #include "../utils.h"
 #include <array>
+#include <iostream>
 
 
 const size_t GENOME_CONSTANTS_SIZE = 4;
@@ -20,6 +21,15 @@ struct genome{
     std::array<uint8_t, GENOME_POW_SIZE> powers {};
 };
 
+inline void print_genome(const genome &best_genome) {
+    auto& c = best_genome.constants;
+    auto& p = best_genome.powers;
+    std::cout << "Best polynomial: "    << c[0] << "x^" << (int)p[0] << " + "
+              << c[1] << "y^" << (int)p[1] << " + "
+              << c[2] << "z^" << (int)p[2] << " + "
+              << c[3] << std::endl;
+}
+
 class CalculationScheduler {
 
 public:
@@ -27,36 +37,38 @@ public:
     CalculationScheduler(const std::shared_ptr<input_data>& input, const input_parameters& input_params);
     ~CalculationScheduler();
 
-    //todo input parameters from args
     double find_transformation_function(genome& best_genome);
 
     void init_population(std::vector<genome>& init_population) const;
 
-    double check_correlation(const std::vector<genome>& population, size_t &best_index);
+    virtual double check_correlation(const std::vector<genome>& population, size_t &best_index);
 
     void repopulate(const std::vector<genome>& old_population, std::vector<genome>& new_population,
                                    genome& best_genome);
 
-private:
+protected:
 
     const std::shared_ptr<input_data> input;
     std::vector<double> transformation_result;
     std::vector<double> corr_result;
 
-    double hr_sum = 0;
-    double squared_hr_corr_sum = 0;
+    const double hr_sum = 0;
+    const double squared_hr_corr_sum = 0;
 
     std::mt19937 corr_value_generator;
-    std::uniform_real_distribution<> corr_uniform_real_distribution{0, 1};
+    std::uniform_real_distribution<> corr_uniform_real_distribution{0, 0.3};
 
     const input_parameters input_params;
 
-private:
+protected:
+
+    virtual void init_calculation();
 
     void transform(const genome& genome1);
-    void calculate_hr_init_data();
-
     const genome* get_parent(const std::vector<genome> &vector, size_t &last_index);
+
+    [[nodiscard]] inline double get_abs_correlation_value(double entries_count, double acc_sum,
+                                     double acc_sum_pow_2, double hr_acc_sum) const;
 };
 
 

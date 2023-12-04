@@ -3,46 +3,60 @@
 //
 
 #include <random>
+#include <iostream>
 #include "CalculationScheduler.h"
-
 
 
 CalculationScheduler::CalculationScheduler(const std::shared_ptr<input_data>& input,
                                            const input_parameters& input_params): input(input), input_params(input_params),
                                                                                   corr_value_generator(input_params.seed),
-                                                                                  transformation_result(input_params.population_size),
-                                                                                  corr_result(input_params.population_size){
-    calculate_hr_init_data();
+                                                                                  transformation_result(input->acc_entries_count),
+                                                                                  corr_result(input_params.population_size),
+                                                                                  hr_sum(input->hr_sum),
+                                                                                  squared_hr_corr_sum(input->squared_hr_corr_sum){
+
 }
 
 CalculationScheduler::~CalculationScheduler() = default;
 
-double CalculationScheduler::find_transformation_function(genome& best_genome) {
 
-    std::vector<genome> old_population {this->input_params.population_size};
-    std::vector<genome> new_population {this->input_params.population_size};
-    init_population(new_population);
+double CalculationScheduler::find_transformation_function(genome& best_genome) {
+    init_calculation();
+
+    //new_population name throws vector subscript out of range line 1566 ???
+    std::vector<genome> curr_population (this->input_params.population_size);
+    std::vector<genome> old_population (this->input_params.population_size);
+    init_population(curr_population);
+
+//    std::cout << curr_population.size() << std::endl;
+//    std::cout << old_population.size() << std::endl;
 
     uint32_t step_done_count = 0;
     double max_corr = 0;
     size_t best_index = 0;
+    const auto desired_corr = this->input_params.desired_correlation;
 
     while(step_done_count < this->input_params.max_step_count){
-        max_corr = check_correlation(new_population, best_index);
-        ++step_done_count;
-        if(max_corr > this->input_params.desired_correlation){
+        max_corr = check_correlation(curr_population, best_index);
+        if(max_corr > desired_corr){
             break;
         }
-        auto swap = new_population; //todo is swap ok ?
-        new_population = old_population; //swap pointers so we don't have to allocate another vector
+        if(step_done_count % 10 == 0){
+            std::cout << step_done_count + 1 << "th step was done. Current best correlation: " << max_corr << std::endl;
+            print_genome(curr_population[best_index]);
+        }
+
+        auto swap = curr_population;
+        curr_population = old_population; //swap pointers so we don't have to allocate another vector
         old_population = swap;
 
-        repopulate(old_population, new_population, old_population[best_index]);
+        repopulate(old_population, curr_population, old_population[best_index]);
         //after new repopulation the best genome is at the first position again
         best_index = 0;
+        ++step_done_count;
     }
     //todo destroy objects + close graphics card etc.
-    std::memcpy(&best_genome, &new_population[best_index], sizeof(genome));
+    std::memcpy(&best_genome, &curr_population[best_index], sizeof(genome));
     return max_corr;
 }
 
@@ -54,7 +68,7 @@ void CalculationScheduler::init_population(std::vector<genome>& init_population)
     std::uniform_real_distribution<> uniformRealDistribution(-this->input_params.const_scope, this->input_params.const_scope); // define the range
     std::uniform_int_distribution<> uniformIntDistribution(1, this->input_params.pow_scope); // define the range
 
-    for(int i = 0; i < this->input_params.population_size; i++){//todo parallel init
+    for(size_t i = 0; i < this->input_params.population_size; i++){//todo parallel init
         genome genome {};
 
         //init genome constants
@@ -72,42 +86,54 @@ double CalculationScheduler::check_correlation(const std::vector<genome>& popula
 
     double best_corr = 0;
     size_t gen_index = 0;
+    const auto entries_count = (double)this->input->hr_entries_count;
+    const auto& hr = this->input->hr->values;
     for (const genome gen: population) {
         transform(gen);
 
         double acc_sum = 0;
         double acc_sum_pow_2 = 0;
         double hr_acc_sum = 0;
-        for (int i = 0; i < this->input->entries_count; ++i) { //todo parallel shh
+        for (int i = 0; i < entries_count; ++i) {
             auto trs_acc_unit = this->transformation_result[i];
             acc_sum += trs_acc_unit;
-            acc_sum_pow_2 += trs_acc_unit * trs_acc_unit;
-            hr_acc_sum += trs_acc_unit * this->input->hr->values[i]; //todo slow?
+            acc_sum_pow_2 += (trs_acc_unit * trs_acc_unit);
+            hr_acc_sum += (trs_acc_unit * hr[i]);
         }
 
-        double corr = abs((this->input->entries_count * hr_acc_sum) - this->hr_sum * acc_sum)
-                / (this->squared_hr_corr_sum * sqrt((this->input->entries_count * acc_sum_pow_2) - acc_sum * acc_sum));
+        double corr_abs = get_abs_correlation_value(entries_count, acc_sum, acc_sum_pow_2, hr_acc_sum);
 
-        if(corr > best_corr){
-            best_corr = corr;
+        if(corr_abs > best_corr){
+            best_corr = corr_abs;
             best_index = gen_index;
         }
-        this->corr_result[gen_index] = corr;
+        this->corr_result[gen_index] = corr_abs;
         ++gen_index;
     }
     return best_corr;
 }
 
+double CalculationScheduler::get_abs_correlation_value(const double entries_count, double acc_sum, double acc_sum_pow_2,
+                                                       double hr_acc_sum) const {
+    auto divident = (entries_count * hr_acc_sum) - (hr_sum * acc_sum);
+
+    auto divisor1 = sqrt(squared_hr_corr_sum);
+    auto divisor2 = sqrt(entries_count * acc_sum_pow_2) - (acc_sum * acc_sum);
+
+    double corr = divident / (divisor1 * divisor2);
+
+    double corr_abs = abs(corr);
+    return corr_abs;
+}
+
 void CalculationScheduler::repopulate(const std::vector<genome>& old_population,
                                                      std::vector<genome>& new_population, genome& best_genome) {
-    size_t population_size = this->input->entries_count;
+    const size_t population_size = this->input_params.population_size;
 
-    size_t current_index = 0;
 
     //copy the best genome to the next gen
-
     std::memcpy(&new_population[0], &best_genome, sizeof(genome));
-    ++current_index;
+    size_t current_index = 1;
     size_t last_parent_index = 0;
     while(current_index < population_size){ //todo parallel shit
         auto parent1 = get_parent(old_population, last_parent_index);
@@ -122,50 +148,42 @@ void CalculationScheduler::repopulate(const std::vector<genome>& old_population,
 }
 
 void CalculationScheduler::transform(const genome& current_genome) {
-    auto& acc_x = input->acc_z;
-    auto& acc_y = input->acc_z;
-    auto& acc_z = input->acc_z;
+    const auto& acc_x = input->acc_z;
+    const auto& acc_y = input->acc_z;
+    const auto& acc_z = input->acc_z;
 
-    auto& c = current_genome.constants;
-    auto& p = current_genome.powers;
+    const auto& c = current_genome.constants;
+    const auto& p = current_genome.powers;
 
-    for(int i = 0; i < input->entries_count; ++i){ //todo parallel shh
+    const auto vector_size = input->acc_entries_count;
+    for(size_t i = 0; i < vector_size; ++i){ //todo parallel shh
         double x = acc_x->values[i];
         double y = acc_y->values[i];
         double z = acc_z->values[i];
 
-        //todo better way?
         this->transformation_result[i] = c[0] * pow(x, p[0]) + c[1] * pow(y, p[1])
                 + c[2] * pow(z, p[2]) + c[3];
     }
 }
 
-void CalculationScheduler::calculate_hr_init_data() {
-
-    double sum = 0;
-    double sum_power_2 = 0;
-
-    for (const auto hr: this->input->hr->values) {
-        sum += hr;
-        sum_power_2 += hr * hr;
-    }
-
-    this->hr_sum = sum;
-    this->squared_hr_corr_sum = sqrt(this->input->entries_count * sum_power_2 - (sum * sum));
-}
 
 const genome* CalculationScheduler::get_parent(const std::vector<genome> &vector, size_t &last_index) {
 
+    const auto population_size = this->input_params.population_size;
     double corr_needed = this->corr_uniform_real_distribution(this->corr_value_generator);
     double curr_corr_sum = 0;
     while(curr_corr_sum < corr_needed){
         curr_corr_sum += this->corr_result[last_index];
         ++last_index;
-        if(last_index > this->input->entries_count){
+        if(last_index >= population_size){
             last_index = 0;
         }
     }
 
     return &vector[last_index];
+}
+
+void CalculationScheduler::init_calculation() {
+
 }
 

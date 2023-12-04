@@ -31,9 +31,18 @@ struct input_data{
     std::unique_ptr<input_vector> acc_y = nullptr;
     std::unique_ptr<input_vector> acc_z = nullptr;
     std::unique_ptr<input_vector> hr = nullptr;
-    size_t entries_count = 0;
-    time_t first_acc_time = 0;
+
+    size_t hr_entries_count = 0;
+    size_t acc_entries_count = 0;
+
     time_t first_hr_time = 0;
+    time_t first_acc_time = 0;
+    uint8_t sampling_rate = 0;
+    size_t hr_date_end_index = 0;
+    size_t acc_date_end_index = 0;
+
+    double hr_sum = 0;
+    double squared_hr_corr_sum = 0;
 };
 
 enum file_type{
@@ -42,33 +51,47 @@ enum file_type{
 
 class Preprocessor {
 
-private:
-    const char* time_format = "%Y-%m-%d %H:%M:%S";
-
+public:
+    Preprocessor(std::string  input_folder);
 
 public:
-    bool load_and_preprocess(std::string& hr_file, std::string& acc_file, const std::shared_ptr<input_data>& result);
-    bool load_and_preprocess_folder(const std::string& input_folder, const std::shared_ptr<input_data> &result);
+    bool load_and_preprocess(std::string& hr_file, std::string& acc_file, const std::shared_ptr<input_data>& result,
+                             const std::string& folder_name) const;
+    bool load_and_preprocess_folder(const std::shared_ptr<input_data> &result) const;
 
+protected:
+    const std::string input_folder;
 
-private:
-    bool read_file_content(std::string& input_file, time_t hr_begin_time, const std::shared_ptr<input_data> &result, size_t vector_size);
+protected:
+    [[nodiscard]] bool process_file_content(const std::string& input_file, bool is_acc_file,
+                              const std::shared_ptr<input_data> &result, size_t vector_size) const;
 
-    void filter_input_data(const std::shared_ptr<input_data> &inputData);
+    virtual void load_acc_file_content(const std::shared_ptr<input_data> &result, std::ifstream &file) const;
 
-    static void normalize_data(const std::shared_ptr<input_data> &data);
+    virtual void load_hr_file_content(const std::shared_ptr<input_data> &result, std::ifstream &file) const;
 
-    void skip_past_entries(time_t hr_begin_time, std::stringstream &file, std::string &result_line, time_t &previous_time) const;
+    virtual void preprocess_vectors(const std::shared_ptr<input_data> &result) const;
 
-    void load_acc_file_content(time_t hr_begin_time, const std::shared_ptr<input_data> &result, std::ifstream &file) const;
+    void normalize_data(const std::shared_ptr<input_data> &data) const;
 
-    void load_hr_file_content(const std::shared_ptr<input_data> &result, std::ifstream &file) const;
+    virtual void find_min_max(const std::unique_ptr<input_vector> &input) const;
 
-    static void find_min_max(const std::unique_ptr<input_vector> &input);
+    virtual void norm_input_vector(const std::unique_ptr<input_vector> &input) const;
 
-    static void collect_directory_data_files_entries(const std::filesystem::path& root_path, directory_map& folder_map);
+    void collect_directory_data_files_entries(directory_map& folder_map) const;
+
+protected:
+
+    static void skip_past_time_entries(time_t begin_time, size_t date_end_index, std::ifstream &file,
+                                       std::string &result_line) ;
+
+    static bool analyze_files(const std::string &hr_file, const std::string &acc_file, const std::shared_ptr<input_data> &result);
 
     static size_t get_data_vector_needed_size(std::string& input_file);
+
+    static time_t get_first_entry_date(std::ifstream &file, std::string &line, size_t& date_end_index);
+    static void calculate_hr_init_data(const std::shared_ptr<input_data>& input);
+
 };
 
 

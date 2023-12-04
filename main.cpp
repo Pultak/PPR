@@ -2,12 +2,18 @@
 #include <fstream>
 #include "preprocessing/Preprocessor.h"
 #include "computation/CalculationScheduler.h"
+#include "preprocessing/ParallelPreprocessor.h"
 
 #include <windows.h>
 #include <ppl.h>
 #include <algorithm>
 #include <array>
 #include <valarray>
+
+#include "computation/gpu/OpenCLComponent.h"
+#include "computation/ParallelCalculationScheduler.h"
+
+void transform_genome_to_strin(const genome &best_genome, std::string &result);
 
 using namespace concurrency;
 using namespace std;
@@ -113,34 +119,62 @@ void doParallelCalc(){
 }
 
 
-int main(int argc, char* argv[]) {
+void dump_result(const genome& best_genome, const double max_corr){
 
-    //todo input parameter choose from serial or parallel
-    input_parameters params {}; //todo init from args
+    std::cout << "The best correlation found: " << max_corr << std::endl;
+    print_genome(best_genome);
+    //todo svg
+}
 
-    Preprocessor preprocessor {};
+void parallel_run(const std::string& input_folder, const input_parameters params){
+
+    OpenCLComponent cl{};
+
+    if(!cl.was_init_successful()){
+        std::cerr << "GPU init failed!" << std::endl;
+        exit(-1);
+    }
+
+    ParallelPreprocessor preprocessor {input_folder};
 
     auto input = std::make_shared<input_data>();
 
-    //todo folder from parameter
-    if(!preprocessor.load_and_preprocess_folder(R"(c:\Users\pulta\OneDrive\Plocha\School\N\5\PPR\data\big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.2\001\)", input)){
-        return EXIT_FAILURE;
-    }
+    preprocessor.load_and_preprocess_folder(input);
+    std::cout << "-------------------------------" << std::endl << std::endl;
+    ParallelCalculationScheduler scheduler(cl, input, params);
+    genome best_genome{};
 
+    double max_corr = scheduler.find_transformation_function(best_genome);
+    dump_result(best_genome, max_corr);
+}
+
+void serial_run(const std::string& input_folder, const input_parameters params){
+    Preprocessor preprocessor {input_folder};
+
+    auto input = std::make_shared<input_data>();
+
+    preprocessor.load_and_preprocess_folder(input);
     std::cout << "-------------------------------" << std::endl << std::endl;
 
-    CalculationScheduler scheduler{input, params};
+    CalculationScheduler scheduler(input, params);
     genome best_genome{};
-    auto max_corr = scheduler.find_transformation_function(best_genome);
-//    auto max_corr = 0.5;
 
-    std::cout << "The best correlation found: " << max_corr << std::endl;
+    double max_corr = scheduler.find_transformation_function(best_genome);
+    dump_result(best_genome, max_corr);
+}
 
-    auto& c = best_genome.constants;
-    auto& p = best_genome.powers;
-    std::cout << "Best polynomial: "    << c[0] << "x^" << (int)p[0] << " + "
-                                        << c[1] << "y^" << (int)p[1] << " + "
-                                        << c[2] << "z^" << (int)p[2] << " + "
-                                        << c[3];
+int main(int argc, char* argv[]) {
+
+    bool parallel = true; //todo args
+    std::string input_folder =
+            R"(c:\Users\pulta\OneDrive\Plocha\School\N\5\PPR\data\big-ideas-lab-glycemic-variability-and-wearable-device-data-1.1.2\001\)";
+
+    input_parameters params {}; //todo init from args
+
+    std::cout << "Executing code in " << (parallel ? "parrallel" : "sequential") << std::endl;
+
+    parallel ? parallel_run(input_folder, params) : serial_run(input_folder, params);
+
     return EXIT_SUCCESS;
 }
+

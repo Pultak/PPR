@@ -5,28 +5,38 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
-#include <iomanip>
 #include <ppl.h>
 #include <limits>
 #include <filesystem>
 #include <stack>
+#include <utility>
+#include <execution>
 #include "Preprocessor.h"
 #include "../utils.h"
 
 
-bool Preprocessor::load_and_preprocess(std::string& hr_file, std::string& acc_file, const std::shared_ptr<input_data>& result) {
+bool Preprocessor::load_and_preprocess(std::string& hr_file, std::string& acc_file,
+                                       const std::shared_ptr<input_data>& result, const std::string& folder_name)const {
 
-    //todo make sure to cut the size
     auto vector_size = get_data_vector_needed_size(hr_file);
 
-    bool read_ok = read_file_content( hr_file, 0, result, vector_size) &&
-            read_file_content( acc_file, result->first_hr_time, result, vector_size);
+    bool files_ok = analyze_files(hr_file, acc_file, result);
+    if(!files_ok){
+        return false;
+    }
+    std::cout << "Files analyzed under folder " << folder_name <<
+                ". Sampling rate of ACC is " << (int)result->sampling_rate << std::endl;
+
+    bool read_ok = process_file_content(hr_file, false, result, vector_size) &&
+                   process_file_content(acc_file, true, result, result->hr_entries_count);
     if(!read_ok){
         std::cerr << "Input load failed!" << std::endl;
         return false;
     }
-    //filter_input_data(result); todo we dont need this when using fixed size
-    //todo find min + max
+
+    preprocess_vectors(result);
+    calculate_hr_init_data(result);
+
     __int64 elapsed = time_call([&] {
         normalize_data(result);
     });
@@ -34,16 +44,41 @@ bool Preprocessor::load_and_preprocess(std::string& hr_file, std::string& acc_fi
     return true;
 }
 
-bool Preprocessor::load_and_preprocess_folder(const std::string& input_folder, const std::shared_ptr<input_data> &result) {
+void Preprocessor::preprocess_vectors(const std::shared_ptr<input_data> &result) const {
+    auto& x_input = result->acc_x->values;
+    auto& y_input = result->acc_y->values;
+    auto& z_input = result->acc_z->values;
+    const uint8_t sampling_rate = result->sampling_rate;
+    //are there are more entries in the hr vector than the acc vector?
+    if(result->acc_entries_count < result->hr_entries_count){
+        x_input.resize(result->acc_entries_count);
+        y_input.resize(result->acc_entries_count);
+        z_input.resize(result->acc_entries_count);
+
+        result->hr_entries_count = result->acc_entries_count;
+    }
+    result->hr->values.resize(result->acc_entries_count);
+
+    std::for_each(std::execution::seq,begin(x_input), end(x_input), [&](double& value){
+        value /= sampling_rate;
+    });
+    std::for_each(std::execution::seq,begin(y_input), end(y_input), [&](double& value){
+        value /= sampling_rate;
+    });
+    std::for_each(std::execution::seq,begin(z_input), end(z_input), [&](double& value){
+        value /= sampling_rate;
+    });
+}
+
+bool Preprocessor::load_and_preprocess_folder(const std::shared_ptr<input_data> &result) const{
     directory_map directories {};
-    collect_directory_data_files_entries(input_folder, directories);
+    collect_directory_data_files_entries(directories);
     std::cout << "Loaded total of " << directories.size() << " directories!" << std::endl;
-    //todo
     for (const auto& data_entry: directories) {
         //todo local result and then merge
         std::string hr_file = data_entry.second.first;
         std::string acc_file = data_entry.second.second;
-        if(!load_and_preprocess(hr_file, acc_file, result)){
+        if(!load_and_preprocess(hr_file, acc_file, result, data_entry.first)){
             return false;
         }
     }
@@ -60,9 +95,9 @@ file_type is_data_file(const std::string& file_name){
     return file_type::NOT_DATA_FILE;
 }
 
-void Preprocessor::collect_directory_data_files_entries(const std::filesystem::path& root_path, directory_map& folder_map) {
+void Preprocessor::collect_directory_data_files_entries(directory_map& folder_map) const{
     std::stack<std::filesystem::path> pathStack;
-    pathStack.push(root_path);
+    pathStack.emplace(this->input_folder);
 
     while (!pathStack.empty()) {
         std::filesystem::path currentPath = pathStack.top();
@@ -70,10 +105,10 @@ void Preprocessor::collect_directory_data_files_entries(const std::filesystem::p
 
         for (const auto& entry: std::filesystem::directory_iterator(currentPath)) {
             if (entry.is_directory()) {
-                std::cout << "Folder: " << entry.path() << "\n"; //todo comment
+//                std::cout << "Folder: " << entry.path() << "\n"; //todo comment
                 pathStack.push(entry.path());
             } else if (entry.is_regular_file()) {
-                std::cout << "File: " << entry.path() << "\n";
+//                std::cout << "File: " << entry.path() << "\n";
                 const auto& file_path = entry.path();
                 auto parent_folder_name = file_path.parent_path().filename().string();
                 auto file_type = is_data_file(file_path.filename().string());
@@ -115,24 +150,22 @@ size_t Preprocessor::get_data_vector_needed_size(std::string& input_file){
     return vector_size;
 }
 
-bool Preprocessor::read_file_content(std::string& input_file, time_t hr_begin_time,
-                                     const std::shared_ptr<input_data> &result, size_t vector_size) {
+bool Preprocessor::process_file_content(const std::string& input_file, bool is_acc_file,
+                                        const std::shared_ptr<input_data> &result, const size_t vector_size) const{
     std::ifstream file(input_file);
     if (file.is_open()) {
 
         __int64 elapsed = time_call([&] {
-            if (hr_begin_time) {
+            if (is_acc_file) {
                 //hr_begin_time is not 0, so we are loading acc file
-                result->acc_x = std::make_unique<input_vector>(vector_size);
-                result->acc_y = std::make_unique<input_vector>(vector_size);
-                result->acc_z = std::make_unique<input_vector>(vector_size);
-                load_acc_file_content(hr_begin_time, result, file);
+                result->acc_entries_count = vector_size;
+                load_acc_file_content(result, file);
             } else {
-                result->hr = std::make_unique<input_vector>(vector_size);
+                result->hr_entries_count = vector_size;
                 load_hr_file_content(result, file);
             }
-            file.close();
         });
+        file.close();
         std::cout << "Parsing of file (" << input_file << ") took " << elapsed << " ms" << std::endl;
         return true;
     } else {
@@ -143,66 +176,52 @@ bool Preprocessor::read_file_content(std::string& input_file, time_t hr_begin_ti
 }
 
 void Preprocessor::load_hr_file_content(const std::shared_ptr<input_data> &result, std::ifstream &file) const {
+    result->hr = std::make_unique<input_vector>(result->hr_entries_count);
     auto& hr_input = result->hr->values;
     std::string line;
 
-//    std::stringstream buffer;
-//    buffer << file.rdbuf();
+    skip_past_time_entries(result->first_acc_time, result->hr_date_end_index, file, line);
 
-    //todo get position of first comma
-
-    std::getline(file, line); //skip first line (header)
-    if(std::getline(file, line)){
-        tm tm = {};
-        std::string date;
-        std::istringstream iss(line);
-        std::getline(iss, date, ',') >> std::get_time(&tm, "%b %d %Y %H:%M:%S");
-
-        std::stringstream ss(date);
-        ss >> std::get_time(&tm, time_format);
-        time_t entry_time = mktime(&tm);
-        result->first_hr_time = entry_time;
-    }
+    const size_t data_start_index = result->hr_date_end_index + 1;
 
     size_t count = 0;
     do {
-        std::istringstream iss(line);
-//        auto date = line.substr(0, 19); //todo
-        auto hr = line.substr(20, 6);//todo number scary
+//        auto date = line.substr(0, date_end_index);
+        auto hr = line.substr(data_start_index, 6); //6 chars is the maximum possible size of hr entry
         hr_input[count] = std::stod(hr);
         ++count;
 
     } while (std::getline(file, line));
-    result->entries_count = count;
+    result->hr_entries_count = count - count % VECTOR_SIZE;
+    hr_input.resize(result->hr_entries_count);
 }
 
-void Preprocessor::load_acc_file_content(time_t hr_begin_time, const std::shared_ptr<input_data> &result,
-                                         std::ifstream &file) const {
+void Preprocessor::load_acc_file_content(const std::shared_ptr<input_data> &result, std::ifstream &file) const {
+    result->acc_x = std::make_unique<input_vector>(result->hr_entries_count);
+    result->acc_y = std::make_unique<input_vector>(result->hr_entries_count);
+    result->acc_z = std::make_unique<input_vector>(result->hr_entries_count);
     auto& x_input = result->acc_x->values;
     auto& y_input = result->acc_y->values;
     auto& z_input = result->acc_z->values;
-    time_t previous_time;
     std::string line;
 
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    //todo get only lines equal to size of the hr file
+    std::getline(file, line); //skip first line (header)
+
     //first filter all lines that are before our wanted time
-    skip_past_entries(hr_begin_time, buffer, line, previous_time);
+    skip_past_time_entries(result->first_hr_time, result->acc_date_end_index, file, line);
 
     //now we can start saving some data
-//    uint8_t sampling_rate = get_sampling_rate();
-    uint8_t sampling_rate = 32; //todo
-    tm tm = {};
+    const size_t data_start_index = result->acc_date_end_index + 1;
+    const uint8_t sampling_rate = result->sampling_rate;
+    const size_t entries_count = result->hr_entries_count;
     uint8_t count = 0;
     size_t index = 0;
-    do{//todo vectorize this shhh which could be done by having multiple methods with specific vector size for vectorization
-
-//        auto date = line.substr(0, 26);
-        auto x_value_end = line.find(',', 27); //todo scary number
+    do{
+//        auto date = line.substr(0, date_end_index);
+        auto x_value_end = line.find(',', data_start_index);
         auto y_value_end = line.find(',', x_value_end + 1);
 
-        auto x = line.substr(27, x_value_end - 27);
+        auto x = line.substr(data_start_index, x_value_end - data_start_index);
         auto y = line.substr(x_value_end + 1, y_value_end - x_value_end - 1);
         auto z = line.substr(y_value_end + 1, line.size() - y_value_end - 1);
 
@@ -210,87 +229,42 @@ void Preprocessor::load_acc_file_content(time_t hr_begin_time, const std::shared
         y_input[index] += std::stod(y);
         z_input[index] += std::stod(z);
         ++count;
-        if(count >= 32){
+        if(count >= sampling_rate){
             count = 0;
             ++index;
+            if(index >= entries_count){
+                break;
+            }
         }
+    } while(std::getline(file, line));
 
-    }while (std::getline(buffer, line));
-
-//    myVector.shrink_to_fit(); //todo use this?
-
-    concurrency::parallel_for_each(begin(x_input), begin(x_input) + result->entries_count, [&](double& value){
-        value /= sampling_rate;
-    });
-    //todo
-    concurrency::parallel_for_each(begin(y_input), end(y_input), [&](double& value){
-        value /= sampling_rate;
-    });
-    //todo
-    concurrency::parallel_for_each(begin(z_input), end(z_input), [&](double& value){
-        value /= sampling_rate;
-    });
-
+    result->acc_entries_count = index - index % VECTOR_SIZE;
 }
 
-void Preprocessor::skip_past_entries(time_t hr_begin_time, std::stringstream &file, std::string &result_line,
-                                     time_t &previous_time) const {
-    std::tm tm = {};
+void Preprocessor::skip_past_time_entries(const time_t begin_time, const size_t date_end_index, std::ifstream &file,
+                                          std::string &result_line) {
     std::string line;
-    while (std::getline(file, line)) { //todo do the skip before loading the whole file
-        std::string date;
-        std::istringstream iss(line);
-        std::getline(iss, date, ',') >> std::get_time(&tm, "%b %d %Y %H:%M:%S");
-
-        std::stringstream ss(date);
-        ss >> std::get_time(&tm, time_format);
-        time_t time = mktime(&tm);
-        if(time < hr_begin_time){
+    while (std::getline(file, line)) { 
+        auto date = line.substr(0, date_end_index);
+        auto time = parse_date(date);
+        if(time < begin_time){
             continue;
         }else{
-            previous_time = time;
             result_line = line;
             break;
         }
     }
 }
 
-void Preprocessor::filter_input_data(const std::shared_ptr<input_data> &inputData) {
-    //difftime returns seconds
-    double diff_minutes = difftime(inputData->first_hr_time, inputData->first_acc_time) / 60;
-    auto del_entries_count = (int) abs(diff_minutes);
-
-    std::vector<double> &hr_input = inputData->hr->values;
-    if(del_entries_count > 0){
-        //remove hr entries that are before acc values
-        hr_input.erase(hr_input.begin(), hr_input.begin() + del_entries_count);
-        inputData->entries_count -= del_entries_count;
-    }
-
-    uint8_t size_remainder = inputData->entries_count % VECTOR_SIZE;
-    if(size_remainder != 0){
-        std::vector<double> &acc_x = inputData->acc_x->values;
-        std::vector<double> &acc_y = inputData->acc_y->values;
-        std::vector<double> &acc_z = inputData->acc_z->values;
-
-        hr_input.erase(hr_input.end() - size_remainder, hr_input.end());
-        acc_x.erase(acc_x.end() - size_remainder, acc_x.end());
-        acc_y.erase(acc_y.end() - size_remainder, acc_y.end());
-        acc_z.erase(acc_z.end() - size_remainder, acc_z.end());
-
-        inputData->entries_count -= size_remainder;
-    }
-}
-
-void norm_input_vector(const std::unique_ptr<input_vector>& vector){
+void Preprocessor::norm_input_vector(const std::unique_ptr<input_vector>& vector) const{
     auto max = vector->max;
     auto min = vector->min;
-    concurrency::parallel_for_each(begin(vector->values), end(vector->values), [&](double& value){
+    std::for_each(std::execution::seq,begin(vector->values), end(vector->values), [&](double& value){
         value = (value - min) / (max - min);
     });
 }
 
-void Preprocessor::normalize_data(const std::shared_ptr<input_data> &data) {
+void Preprocessor::normalize_data(const std::shared_ptr<input_data> &data) const {
     find_min_max(data->acc_x);
     find_min_max(data->acc_y);
     find_min_max(data->acc_z);
@@ -301,13 +275,80 @@ void Preprocessor::normalize_data(const std::shared_ptr<input_data> &data) {
     norm_input_vector(data->hr);
 }
 
-void Preprocessor::find_min_max(const std::unique_ptr<input_vector> &input) {
+void Preprocessor::find_min_max(const std::unique_ptr<input_vector> &input) const {
     double min_value = std::numeric_limits<double>::max();
     double max_value = std::numeric_limits<double>::min();
-    concurrency::parallel_for_each(begin(input->values), end(input->values), [&](double value){
+    std::for_each(std::execution::seq,begin(input->values), end(input->values), [&](double value){
         min_value = std::min(min_value, value);
         max_value = std::max(max_value, value);
     });
     input->min = min_value;
     input->max = max_value;
+}
+
+bool Preprocessor::analyze_files(const std::string &hr_file, const std::string &acc_file,
+                                 const std::shared_ptr<input_data> &result) {
+
+    std::ifstream hfile(hr_file);
+    if (hfile.is_open()) {
+        std::string line;
+        result->first_hr_time = get_first_entry_date(hfile, line, result->hr_date_end_index);
+        hfile.close();
+    }else{
+        std::cerr << "File cannot be opened " << hr_file << std::endl;
+        return false;
+    }
+    std::ifstream afile(acc_file);
+    if (afile.is_open()) {
+        std::string line;
+
+        uint8_t sampling_rate = 1;
+        result->first_acc_time = get_first_entry_date(afile, line, result->acc_date_end_index);
+
+        while(std::getline(afile, line)){
+            std::string date = line.substr(0, result->acc_date_end_index);
+            auto time = parse_date(date);
+            if(time > result->first_acc_time){
+                break;
+            }
+            ++sampling_rate;
+        }
+        result->sampling_rate = sampling_rate;
+        afile.close();
+    }else{
+        std::cerr << "File cannot be opened " << hr_file << std::endl;
+        return false;
+    }
+    return true;
+}
+
+time_t Preprocessor::get_first_entry_date(std::ifstream &file, std::string &line, size_t& date_end_index) {
+    std::getline(file, line); //skip first line (header)
+    if(std::getline(file, line)){
+        date_end_index = line.find(',');
+        std::string date = line.substr(0, date_end_index);
+        time_t entry_time = parse_date(date);
+        return entry_time;
+    }
+    return 0;
+}
+
+
+
+void Preprocessor::calculate_hr_init_data(const std::shared_ptr<input_data>& input) {
+
+    double sum = 0;
+    double sum_power_2 = 0;
+
+    for (const auto hr: input->hr->values) {
+        sum += hr;
+        sum_power_2 += (hr * hr);
+    }
+
+    input->hr_sum = sum;
+    input->squared_hr_corr_sum = (input->hr_entries_count * sum_power_2 - (sum * sum));
+//    input->squared_hr_corr_sum = sqrt(input->hr_entries_count * sum_power_2 - (sum * sum));
+}
+
+Preprocessor::Preprocessor(std::string  input_folder) : input_folder(std::move(input_folder)) {
 }

@@ -5,6 +5,12 @@
 #ifndef OCL_TEST_UTILS_H
 #define OCL_TEST_UTILS_H
 
+#include <sstream>
+
+const size_t VECTOR_SIZE = 16;
+
+//const char* time_format = "%Y-%m-%d %H:%M:%S";
+
 template <class Function>
 __int64 time_call(Function&& f)
 {
@@ -19,7 +25,13 @@ __int64 time_call(Function&& f)
     return duration;
 }
 
-const size_t VECTOR_SIZE = 16;
+inline time_t parse_date(const std::string& date_string){
+    std::tm tm{};
+    std::stringstream ss(date_string);
+    ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+    time_t time = mktime(&tm);
+    return time;
+}
 
 
 struct input_parameters{
