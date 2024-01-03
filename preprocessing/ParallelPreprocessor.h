@@ -30,14 +30,15 @@ class ParallelPreprocessor : public Preprocessor {
 public:
     explicit ParallelPreprocessor(const std::string& input_folder): Preprocessor(input_folder){};
 
+    void find_min_max(const std::unique_ptr<input_vector> &input) const override;
+
 protected:
+
     void load_acc_file_content(const std::shared_ptr<input_data> &result, std::ifstream &file) const override;
 
-    void preprocess_vectors(const std::shared_ptr<input_data> &result) const override;
+    void preprocess_vectors(const std::shared_ptr<input_data> &result, size_t current_offset) const override;
 
     void load_hr_file_content(const std::shared_ptr<input_data> &result, std::ifstream &file) const override;
-
-    void find_min_max(const std::unique_ptr<input_vector> &input) const override;
 
     void norm_input_vector(const std::unique_ptr<input_vector> &input) const override;
 };
