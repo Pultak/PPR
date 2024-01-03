@@ -5,11 +5,11 @@
 #include "OpenCLComponent.h"
 #include "../CalculationScheduler.h"
 
+#include <utility>
 #include <vector>
 #include <iostream>
 
 #define CL_HPP_ENABLE_EXCEPTIONS
-#define CL_HPP_TARGET_OPENCL_VERSION 200
 #include <CL/opencl.hpp>
 
 
@@ -17,35 +17,17 @@
 #pragma comment(lib, "opencl.lib")
 #endif
 
+const char* full_correlation_kernel_name = "FULL_CORRELATION_KERNEL";
+const char* full_correlation_kernel_source = R"(
+#pragma OPENCL EXTENSION cl_khr_fp64 : enable
 
-const char* transform_kernel_name = "TRANSFORM_KERNEL";
-//todo __constant or __local?
-//todo workgroups
-//todo bigger arrays wont fit in global_id probably
-const char* transform_kernel_source = R"(
-__kernel void TRANSFORM_KERNEL( __global double *acc_x,
-                                __global double *acc_y,
-                                __global double *acc_z,
-                                __constant double* c,
-                                __constant unsigned char* p,
-                                __global double *result) {
-
-    unsigned int global_id = get_global_id(0);
-
-	double x = acc_x[global_id];
-	double y = acc_y[global_id];
-	double z = acc_z[global_id];
-
-	result[global_id] = c[0] * pow(x, p[0]) + c[1] * pow(y, p[1])
-                + c[2] * pow(z, p[2]) + c[3];
-}
-)";
-const char* correlation_kernel_name = "CORRELATION_KERNEL";
-//todo bigger arrays wont fit in global_id probably
-const char* correlation_kernel_source = R"(
-__kernel void CORRELATION_KERNEL(__global double *acc_trs_values,
-                                 __global double *hr_values,
-                                 __local double* local_sum_acc,
+__kernel void FULL_CORRELATION_KERNEL(__constant double *acc_x,
+                                 __constant double *acc_y,
+                                 __constant double *acc_z,
+                                 __constant double *hr_values,
+                                 __global double* c,
+                                 __global unsigned char* p,
+                                 __local double *local_sum_acc,
                                  __local double *local_sum_acc2,
                                  __local double *local_sum_acc_hr,
                                  __global double *result_acc,
@@ -55,29 +37,31 @@ __kernel void CORRELATION_KERNEL(__global double *acc_trs_values,
     size_t global_id = get_global_id(0);
 	size_t local_id = get_local_id(0);
     size_t group_id = get_group_id(0);
-    size_t local_size = get_local_size(0);
+    size_t group_size = get_local_size(0);
 	unsigned int stride = 1;
 
-	double acc = acc_trs_values[global_id];
+	double x = acc_x[global_id];
+	double y = acc_y[global_id];
+	double z = acc_z[global_id];
+
+	double acc = c[0] * pow(x, p[0]) + c[1] * pow(y, p[1])
+                    + c[2] * pow(z, p[2]) + c[3];
+
 	double hr = hr_values[global_id];
 	local_sum_acc[local_id] = acc;
 	local_sum_acc2[local_id] = acc * acc;
 	local_sum_acc_hr[local_id] = acc * hr;
 
-	do {
-		unsigned int next_stride = 2 * stride;
-		unsigned int neighbor_idx = local_id + stride;
-		if ((local_id % next_stride) == 0) {
-			local_sum_acc[local_id] = local_sum_acc[local_id] + local_sum_acc[neighbor_idx];
-			local_sum_acc2[local_id] = local_sum_acc2[local_id] + local_sum_acc2[neighbor_idx];
-			local_sum_acc_hr[local_id] = local_sum_acc_hr[local_id] + local_sum_acc_hr[neighbor_idx];
-		}
+    barrier(CLK_LOCAL_MEM_FENCE);
 
-		stride = next_stride;
-
-		barrier(CLK_LOCAL_MEM_FENCE);
-	} while (stride < local_size);
-
+    for(int i = group_size/2; i > 0; i >>= 1) {
+        if(local_id < i) {
+			local_sum_acc[local_id] += local_sum_acc[local_id + i];
+			local_sum_acc2[local_id] += local_sum_acc2[local_id + i];
+			local_sum_acc_hr[local_id] += local_sum_acc_hr[local_id + i];
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
 
     if (local_id == 0) {
 		result_acc[group_id] = local_sum_acc[0];
@@ -86,43 +70,58 @@ __kernel void CORRELATION_KERNEL(__global double *acc_trs_values,
 	}
 }
 )";
-OpenCLComponent::OpenCLComponent() {
-    cl::Program program;
+
+void OpenCLComponent::init_opencl_device(std::unique_ptr<OpenCLComponent> &cl_device, const std::string& desired_gpu_device) {
 #if defined(CL_HPP_ENABLE_EXCEPTIONS)
+    cl::Program program;
     try {
 #endif
-        this->selected_device = try_select_first_gpu();//todo let the user choose gpu somehow
 
-        std::vector<std::string> source_codes{transform_kernel_source, correlation_kernel_source};
+        auto selected_device = select_gpu(desired_gpu_device);
+
+        std::vector<std::string> source_codes{full_correlation_kernel_source};
         const cl::Program::Sources& sources(source_codes);
-        this->device_context = std::make_unique<cl::Context>(this->selected_device);
-        program = (device_context, sources);
+        cl::Context device_context = cl::Context(selected_device);
+        program = cl::Program(device_context, sources);
 
-        program.build(this->selected_device, "-cl-std=CL2.0 -cl-denorms-are-zero");
-        this->transform_kernel = std::make_unique<cl::Kernel>(program, transform_kernel_name);
-        this->correlation_kernel = std::make_unique<cl::Kernel>(program, correlation_kernel_name);
-        dump_build_log(program);
+        program.build(selected_device, "-cl-std=CL2.0 -cl-denorms-are-zero");
 
-        this->trans_queue = std::make_unique<cl::CommandQueue>(*this->device_context, this->selected_device);
-        this->corr_queue = std::make_unique<cl::CommandQueue>(*this->device_context, this->selected_device);
+        cl::Kernel full_correlation_kernel = cl::Kernel(program, full_correlation_kernel_name);
+        auto build_err = dump_build_log(program);
+        if(build_err != CL_SUCCESS){
 
-        this->work_group_size = this->correlation_kernel
-                            ->getWorkGroupInfo<CL_KERNEL_WORK_GROUP_SIZE>(this->selected_device);
+            std::cerr << "Error occurred during initialization: " << build_err << "("
+                      << Get_OpenCL_Error_Desc(build_err) << ")" << std::endl;
+            return;
+        }
+        size_t work_group_size = full_correlation_kernel
+                                    .getWorkGroupInfo<CL_KERNEL_WORK_GROUP_SIZE>(selected_device);
+
+        cl_device = std::make_unique<OpenCLComponent>(selected_device, device_context,
+                                                      full_correlation_kernel, work_group_size);
 
 #if defined(CL_HPP_ENABLE_EXCEPTIONS)
-    } catch (cl::Error err) {
+    } catch (cl::Error &err) {
         std::cerr << "Error occurred during initialization: " << err.what() << "(" << err.err() << " - "
-        << Get_OpenCL_Error_Desc(err.err()) << ")" << std::endl;
+                  << Get_OpenCL_Error_Desc(err.err()) << ")" << std::endl;
         dump_build_log(program);
-        this->build_err = CL_INVALID_VALUE;
+        exit(1);
     }
 #endif
 }
 
+OpenCLComponent::OpenCLComponent(cl::Device selected_device, cl::Context device_context,
+                                 cl::Kernel full_corr_kernel, size_t work_group_size):
 
-OpenCLComponent::~OpenCLComponent() {
-    //todo
+                                 selected_device(std::move(selected_device)),
+                                 device_context(std::move(device_context)),
+                                 full_corr_kernel(std::move(full_corr_kernel)),
+                                 work_group_size(work_group_size){
+
 }
+
+
+OpenCLComponent::~OpenCLComponent() = default;
 
 const char* OpenCLComponent::Get_OpenCL_Error_Desc(cl_int error) noexcept{
     switch (error){
@@ -200,8 +199,8 @@ const char* OpenCLComponent::Get_OpenCL_Error_Desc(cl_int error) noexcept{
     }
 }
 
-void OpenCLComponent::dump_build_log(cl::Program& program) {
-    this->build_err = CL_SUCCESS;
+cl_int OpenCLComponent::dump_build_log(cl::Program& program) {
+    cl_int build_err = CL_SUCCESS;
     auto buildInfo = program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(&build_err);
     bool printed_logo = false;
 
@@ -217,9 +216,10 @@ void OpenCLComponent::dump_build_log(cl::Program& program) {
             }
         }
     }
+    return build_err;
 }
 
-cl::Device OpenCLComponent::try_select_first_gpu() {
+cl::Device OpenCLComponent::select_gpu(const std::string &desired_gpu_device) {
     std::vector<cl::Platform> platforms;
     cl::Platform::get(&platforms);
 
@@ -231,164 +231,113 @@ cl::Device OpenCLComponent::try_select_first_gpu() {
             const auto is_available = device.getInfo<CL_DEVICE_AVAILABLE>();
             const auto desc = device.getInfo<CL_DEVICE_NAME>();
             if(is_available){
-                std::cout << "Vybrano zarizeni " << desc << " na platforme "
-                                << platform.getInfo<CL_PLATFORM_NAME>() << std::endl;
-                snitch_device_info(device);
-                return device;
+                if(desired_gpu_device == DEFAULT_GPU_NAME || desc == desired_gpu_device){
+                    std::cout << "Selected GPU Device " << desc << " on platform "
+                            << platform.getInfo<CL_PLATFORM_NAME>() << std::endl;
+                    return device;
+                }
             }else{
-                std::cout << "Nedostupne zarizeni " << desc << " na platforme "
+                std::cout << "Found unavailable device " << desc << " on platform "
                                 << platform.getInfo<CL_PLATFORM_NAME>() << std::endl;
             }
         }
     }
 
+    if(desired_gpu_device != DEFAULT_GPU_NAME){
+        std::cerr << "There is no gpu device with name" << desired_gpu_device << " found!";
+        exit(-1);
+    }
+
     cl::Platform platform = cl::Platform::getDefault();
     cl::Device device = cl::Device::getDefault();
     auto desc = device.getInfo<CL_DEVICE_NAME>();
-    std::cout << "Vybrano vychozi zarizeni " << desc << " na platforme " << platform.getInfo<CL_PLATFORM_NAME>() << std::endl;
-    snitch_device_info(device);
+    std::cout << "Selected default gpu device " << desc << " on platform "
+                                    << platform.getInfo<CL_PLATFORM_NAME>() << std::endl;
     return device;
 }
 
-bool OpenCLComponent::was_init_successful() const {
-    return this->build_err == CL_SUCCESS;
-}
 
-void
-OpenCLComponent::calculate_correlation(const genome &curr_gen, std::vector<double> &out_sum_acc,
-                                       std::vector<double> &out_sum_acc2, std::vector<double> &out_sum_acc_hr,
-                                       const cl::size_type numbers_bytes_size) {
+void OpenCLComponent::calculate_correlation(const genome &curr_gen, std::array<std::vector<double>, 3>& out_sums,
+                                            const cl::size_type entries_count, const size_t work_groups_count,
+                                            cl::Event &corr_kernel_event) {
 
-    const auto work_groups_count = numbers_bytes_size / this->work_group_size;
-    cl::vector<cl::Event> trans_kernel_event(1);	//async call
-    cl::Event corr_kernel_event{};
-    transform_acc(numbers_bytes_size, curr_gen, trans_kernel_event[0]);
+    cl::CommandQueue cmd_queue(this->device_context, this->selected_device);
 
-    auto kernel = *this->device_context;
+    cl::Buffer out_sum_acc_buff = cl::Buffer(this->device_context, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY,
+                                        work_groups_count * sizeof(double), nullptr);
 
-    cl::Buffer out_sum_acc_buff(*this->device_context, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY,
-                                work_groups_count, nullptr);
+    cl::Buffer out_sum_acc2_buff = cl::Buffer(this->device_context, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY,
+                                         work_groups_count * sizeof(double), nullptr);
 
-    cl::Buffer out_sum_acc2_buff(*this->device_context, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY,
-                                 work_groups_count, nullptr);
+    cl::Buffer out_sum_acc_hr_buff = cl::Buffer(this->device_context, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY,
+                                           work_groups_count * sizeof(double), nullptr);
 
-    cl::Buffer out_sum_acc_hr_buff(*this->device_context, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY,
-                                   work_groups_count, nullptr);
-
-
-    this->correlation_kernel->setArg(3, work_group_size * sizeof(double), nullptr);
-    this->correlation_kernel->setArg(4, work_group_size * sizeof(double), nullptr);
-    this->correlation_kernel->setArg(5, work_group_size * sizeof(double), nullptr);
-
-    this->correlation_kernel->setArg(6, out_sum_acc_buff);
-    this->correlation_kernel->setArg(7, out_sum_acc2_buff);
-    this->correlation_kernel->setArg(8, out_sum_acc_hr_buff);
-    //todo sus address passing
-    this->corr_queue->enqueueNDRangeKernel(*this->correlation_kernel, cl::NullRange,
-                                    cl::NDRange(numbers_bytes_size), cl::NullRange,
-                                    &trans_kernel_event, &corr_kernel_event);
-
-    // Read the results from the OpenCL device.
-    this->corr_queue->enqueueReadBuffer(out_sum_acc_buff, CL_TRUE, 0,
-                                 work_groups_count * sizeof(double), out_sum_acc.data());
-    this->corr_queue->enqueueReadBuffer(out_sum_acc2_buff, CL_TRUE, 0,
-                                 work_groups_count * sizeof(double), out_sum_acc2.data());
-    this->corr_queue->enqueueReadBuffer(out_sum_acc_hr_buff, CL_TRUE, 0,
-                                 work_groups_count * sizeof(double), out_sum_acc_hr.data());
-
-    // corr_kernel_event.wait() not needed
-}
-
-void OpenCLComponent::transform_acc(const cl::size_type numbers_bytes_size, const genome& current_gen,
-                                    cl::Event& trans_event) {
-
-    auto kernel = *this->device_context;
-
-    auto constants = cl::Buffer(*this->device_context,
+    auto constants = cl::Buffer(this->device_context,
                                 CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR | CL_MEM_HOST_NO_ACCESS,
-                             GENOME_CONSTANTS_SIZE * sizeof(double),
-                             const_cast<double *>(current_gen.constants.data()));
+                                GENOME_CONSTANTS_SIZE * sizeof(double),
+                                const_cast<double *>(curr_gen.constants.data()));
 
-    auto powers = cl::Buffer(*this->device_context,
+    auto powers = cl::Buffer(this->device_context,
                              CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR | CL_MEM_HOST_NO_ACCESS,
                              GENOME_POW_SIZE * sizeof(uint8_t),
-                             const_cast<unsigned char *>(current_gen.powers.data()));
+                             const_cast<unsigned char *>(curr_gen.powers.data()));
 
-    this->transform_kernel->setArg(3, constants);
-    this->transform_kernel->setArg(4, powers);
+    this->full_corr_kernel.setArg(4, constants);
+    this->full_corr_kernel.setArg(5, powers);
 
-    this->trans_queue->enqueueNDRangeKernel(*this->transform_kernel, cl::NullRange,
-                               cl::NDRange(numbers_bytes_size), cl::NullRange,
-                                   nullptr, &trans_event);
+    this->full_corr_kernel.setArg(6, work_group_size * sizeof(double), nullptr);
+    this->full_corr_kernel.setArg(7, work_group_size * sizeof(double), nullptr);
+    this->full_corr_kernel.setArg(8, work_group_size * sizeof(double), nullptr);
 
-    //todo unmap in destructor if possible queue.enqueueUnmapMemObject(result_cl, result);
+    this->full_corr_kernel.setArg(9, out_sum_acc_buff);
+    this->full_corr_kernel.setArg(10, out_sum_acc2_buff);
+    this->full_corr_kernel.setArg(11, out_sum_acc_hr_buff);
+
+
+    // Create a command queue to communicate with the OpenCL device.
+    cmd_queue.enqueueNDRangeKernel(this->full_corr_kernel, cl::NullRange,
+                                    cl::NDRange(entries_count),
+                                    cl::NDRange(this->work_group_size),
+                                   nullptr, &corr_kernel_event);
+
+//    corr_kernel_event.wait();
+    // Read the results from the OpenCL device.
+    cmd_queue.enqueueReadBuffer(out_sum_acc_buff, CL_FALSE, 0,
+                                 work_groups_count * sizeof(double), out_sums[0].data());
+    cmd_queue.enqueueReadBuffer(out_sum_acc2_buff, CL_FALSE, 0,
+                                 work_groups_count * sizeof(double), out_sums[1].data());
+    cmd_queue.enqueueReadBuffer(out_sum_acc_hr_buff, CL_FALSE, 0,
+                                 work_groups_count * sizeof(double), out_sums[2].data());
+//
 }
 
-void OpenCLComponent::init_static_buffers(const std::shared_ptr<input_data> &input, size_t numbers_bytes_size) {
+void OpenCLComponent::init_static_buffers(const std::shared_ptr<input_data> &input, size_t numbers_bytes_size,
+                                          const size_t work_groups_count) {
     if(buffers_initialized){
         return;
     }
-    if(this->x_acc_vector == nullptr){
-        this->x_acc_vector = std::make_unique<cl::Buffer>(*this->device_context,
-                                      CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR | CL_MEM_HOST_NO_ACCESS,
-                                                    numbers_bytes_size, input->acc_x->values.data());
+    this->x_acc_vector = cl::Buffer(this->device_context,
+                                  CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR | CL_MEM_HOST_NO_ACCESS,
+                                                numbers_bytes_size, input->acc_x->values.data());
 
-//        this->trans_queue->enqueueWriteBuffer(*this->x_acc_vector, CL_TRUE, 0, numbers_bytes_size,
-//                                       input->acc_x->values.data(), nullptr, nullptr);	//blocking call
-        this->transform_kernel->setArg(0, this->x_acc_vector.get());
+    this->full_corr_kernel.setArg(0, this->x_acc_vector);
 
-    }
 
-    if(this->y_acc_vector == nullptr) {
-        this->y_acc_vector = std::make_unique<cl::Buffer>(*this->device_context,
-                                      CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR | CL_MEM_HOST_NO_ACCESS,
-                                                    numbers_bytes_size, input->acc_y->values.data());
-//        this->trans_queue->enqueueWriteBuffer(*this->y_acc_vector, CL_TRUE, 0, numbers_bytes_size,
-//                                       input->acc_y->values.data(), nullptr, nullptr);	//blocking call
-        this->transform_kernel->setArg(1, this->y_acc_vector.get());
-    }
+    this->y_acc_vector = cl::Buffer(this->device_context,
+                                  CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR | CL_MEM_HOST_NO_ACCESS,
+                                                numbers_bytes_size, input->acc_y->values.data());
+    this->full_corr_kernel.setArg(1, this->y_acc_vector);
 
-    if(this->z_acc_vector == nullptr) {
-        this->z_acc_vector = std::make_unique<cl::Buffer>(*this->device_context,
-                                      CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR | CL_MEM_HOST_NO_ACCESS,
-                                                    numbers_bytes_size, input->acc_z->values.data());
-//        this->trans_queue->enqueueWriteBuffer(*this->z_acc_vector, CL_TRUE, 0, numbers_bytes_size,
-//                                       input->acc_z->values.data(), nullptr, nullptr);	//blocking call
-        this->transform_kernel->setArg(2, this->z_acc_vector.get());
-    }
 
-    if(this->transform_result == nullptr){
-        //todo enqueueWriteBuffer enqueueUnmap? + other buffers?
-        this->transform_result = std::make_unique<cl::Buffer>(cl::Buffer(*this->device_context,
-                                                                   CL_MEM_READ_WRITE | CL_MEM_HOST_NO_ACCESS,
-                                                                   numbers_bytes_size, nullptr));
-        this->transform_kernel->setArg(5, this->transform_result.get());
-        this->correlation_kernel->setArg(0, this->transform_result.get());
-    }
+    this->z_acc_vector = cl::Buffer(this->device_context,
+                                  CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR | CL_MEM_HOST_NO_ACCESS,
+                                                numbers_bytes_size, input->acc_z->values.data());
+    this->full_corr_kernel.setArg(2, this->z_acc_vector);
 
-    if(this->hr_vector == nullptr){
-        this->hr_vector = std::make_unique<cl::Buffer>(*this->device_context,
-                               CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR | CL_MEM_HOST_NO_ACCESS,
-                               numbers_bytes_size, input->hr->values.data());
-        //todo enqueueMapSVM??
-//        this->corr_queue->enqueueWriteBuffer(*this->hr_vector, CL_TRUE, 0, numbers_bytes_size,
-//                                       input->hr->values.data(), nullptr, nullptr);	//blocking call
-
-        this->correlation_kernel->setArg(1, this->hr_vector.get());
-    }
+    this->hr_vector = cl::Buffer(this->device_context,
+                                 CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR | CL_MEM_HOST_NO_ACCESS,
+                                 numbers_bytes_size, input->hr->values.data());
+    this->full_corr_kernel.setArg(3, this->hr_vector);
 
     buffers_initialized = true;
-}
-
-void OpenCLComponent::snitch_device_info(cl::Device &device) {
-
-//    auto compute_units = device.getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>();
-//    auto work_itm_dim = device.getInfo<CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS>();
-//    auto max_work_group_size = device.getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>();
-//    auto max_work_itm_size = device.getInfo<CL_DEVICE_MAX_WORK_ITEM_SIZES>();
-//    auto pref_vector_width = device.getInfo<CL_DEVICE_PREFERRED_VECTOR_WIDTH_DOUBLE>();
-//    auto max_mem_alloc_size = device.getInfo<CL_DEVICE_MAX_MEM_ALLOC_SIZE>();
-//    auto max_param_size = device.getInfo<CL_DEVICE_MAX_PARAMETER_SIZE>();
-    this->global_mem_size = device.getInfo<CL_DEVICE_GLOBAL_MEM_SIZE>();
-    this->local_mem_size = device.getInfo<CL_DEVICE_LOCAL_MEM_SIZE>();
 }

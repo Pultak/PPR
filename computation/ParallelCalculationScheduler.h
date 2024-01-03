@@ -24,6 +24,8 @@ protected:
 private:
     OpenCLComponent& cl_device;
 
+    std::vector<std::array<std::vector<double>, 3>> sum_reduce_result;
+
 };
 
 

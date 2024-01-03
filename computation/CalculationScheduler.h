@@ -18,7 +18,7 @@ const size_t GENOME_POW_SIZE = 4;
 
 struct genome{
     std::array<double, GENOME_CONSTANTS_SIZE> constants {};
-    std::array<uint8_t, GENOME_POW_SIZE> powers {};
+    std::array<unsigned char, GENOME_POW_SIZE> powers {};
 };
 
 inline void print_genome(const genome &best_genome) {
@@ -31,6 +31,10 @@ inline void print_genome(const genome &best_genome) {
 }
 
 class CalculationScheduler {
+
+public:
+    bool running = true;
+    std::vector<double> transformation_result;
 
 public:
 
@@ -46,17 +50,18 @@ public:
     void repopulate(const std::vector<genome>& old_population, std::vector<genome>& new_population,
                                    genome& best_genome);
 
+    void transform(const genome& genome1);
+
 protected:
 
     const std::shared_ptr<input_data> input;
-    std::vector<double> transformation_result;
     std::vector<double> corr_result;
 
     const double hr_sum = 0;
     const double squared_hr_corr_sum = 0;
 
     std::mt19937 corr_value_generator;
-    std::uniform_real_distribution<> corr_uniform_real_distribution{0, 0.3};
+    std::uniform_real_distribution<> corr_uniform_real_distribution{0, 0.1};
 
     const input_parameters input_params;
 
@@ -64,10 +69,9 @@ protected:
 
     virtual void init_calculation();
 
-    void transform(const genome& genome1);
     const genome* get_parent(const std::vector<genome> &vector, size_t &last_index);
 
-    [[nodiscard]] inline double get_abs_correlation_value(double entries_count, double acc_sum,
+    [[nodiscard]] double get_abs_correlation_value(double entries_count, double acc_sum,
                                      double acc_sum_pow_2, double hr_acc_sum) const;
 };
 
