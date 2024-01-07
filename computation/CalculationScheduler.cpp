@@ -8,12 +8,13 @@
 
 
 CalculationScheduler::CalculationScheduler(const std::shared_ptr<input_data>& input,
-                                           const input_parameters& input_params): input(input), input_params(input_params),
-                                                                                  corr_value_generator(input_params.seed),
-                                                                                  transformation_result(input->acc_entries_count),
-                                                                                  corr_result(input_params.population_size),
-                                                                                  hr_sum(input->hr_sum),
-                                                                                  squared_hr_corr_sum(input->squared_hr_corr_sum){
+                                           const input_parameters& input_params):
+                                           input(input), input_params(input_params),
+                                           corr_value_generator(input_params.seed),
+                                           transformation_result(input->acc_entries_count),
+                                           corr_result(input_params.population_size),
+                                           hr_sum(input->hr_sum),
+                                           squared_hr_corr_sum(input->squared_hr_corr_sum){
 
 }
 
@@ -36,7 +37,8 @@ double CalculationScheduler::find_transformation_function(genome& best_genome) {
     size_t best_index = 0;
     const auto desired_corr = this->input_params.desired_correlation;
 
-    while(step_done_count < this->input_params.max_step_count && this->running){
+    std::cout << "Starting the main cycle." << std::endl;
+    while(step_done_count < this->input_params.max_step_count){
 
         elapsed = time_call([&] {
             max_corr = check_correlation(curr_population, best_index);
@@ -75,8 +77,10 @@ void CalculationScheduler::init_population(std::vector<genome>& init_population)
 //    std::random_device rd; // obtain a random number from hardware
     std::mt19937 generator(this->input_params.seed); // seed the generator
 
-    std::uniform_real_distribution<> uniformRealDistribution(-this->input_params.const_scope, this->input_params.const_scope); // define the range
-    std::uniform_int_distribution<> uniformIntDistribution(1, this->input_params.pow_scope); // define the range
+    std::uniform_real_distribution<> uniformRealDistribution(-this->input_params.const_scope,
+                                                             this->input_params.const_scope); // define the range
+    std::uniform_int_distribution<> uniformIntDistribution(1,
+                                                           this->input_params.pow_scope); // define the range
 
     for(size_t i = 0; i < this->input_params.population_size; i++){
         genome genome {};
@@ -99,11 +103,13 @@ double CalculationScheduler::check_correlation(const std::vector<genome>& popula
     const auto entries_count = (double)this->input->hr_entries_count;
     const auto& hr = this->input->hr->values;
     for (const genome gen: population) {
+        //first transform the acc data according to genome function
         transform(gen);
 
         double acc_sum = 0;
         double acc_sum_pow_2 = 0;
         double hr_acc_sum = 0;
+        //get all needed sum to calculate correlation
         for (int i = 0; i < entries_count; ++i) {
             auto trs_acc_unit = this->transformation_result[i];
             acc_sum += trs_acc_unit;
@@ -111,6 +117,7 @@ double CalculationScheduler::check_correlation(const std::vector<genome>& popula
             hr_acc_sum += (trs_acc_unit * hr[i]);
         }
 
+        //correlation in abs so that we have easier fitness function validation
         double corr_abs = get_abs_correlation_value(entries_count, acc_sum, acc_sum_pow_2, hr_acc_sum);
 
         if(best_index != gen_index && corr_abs > best_corr){
@@ -143,7 +150,6 @@ double CalculationScheduler::get_abs_correlation_value(const double entries_coun
 void CalculationScheduler::repopulate(const std::vector<genome>& old_population,
                                                      std::vector<genome>& new_population, genome& best_genome) {
     const size_t population_size = this->input_params.population_size;
-
 
     //copy the best genome to the next gen
     std::memcpy(&new_population[0], &best_genome, sizeof(genome));

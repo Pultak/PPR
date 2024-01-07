@@ -11,17 +11,11 @@
 #include <utility>
 
 struct acc_minute_sample{
-    size_t index;
+    size_t index{};
     std::vector<std::string> lines;
 public:
-    acc_minute_sample(const uint8_t sampling_size) : lines(sampling_size){
+    explicit acc_minute_sample(const uint8_t sampling_size) : lines(sampling_size){
     }
-};
-
-struct hr_minute_sample{
-    const size_t index;
-    const std::string line;
-    hr_minute_sample(const size_t index, const std::string line): index(index), line(line){}
 };
 
 
@@ -36,7 +30,7 @@ protected:
 
     void load_acc_file_content(const std::shared_ptr<input_data> &result, std::ifstream &file) const override;
 
-    void preprocess_vectors(const std::shared_ptr<input_data> &result, size_t current_offset) const override;
+    void preprocess_acc_vectors(const std::shared_ptr<input_data> &result, size_t current_offset) const override;
 
     void load_hr_file_content(const std::shared_ptr<input_data> &result, std::ifstream &file) const override;
 

@@ -102,6 +102,7 @@ void dump_result(const genome& best_genome, const double max_corr){
 
 void parallel_run(const input_parameters& params){
 
+    //init gpu and check if it is even possible
     std::unique_ptr<OpenCLComponent> cl = nullptr;
     OpenCLComponent::init_opencl_device(cl, params.desired_gpu_name);
     if(cl == nullptr){
@@ -110,21 +111,36 @@ void parallel_run(const input_parameters& params){
     }
     std::cout << TEXT_SEPARATOR << std::endl << std::endl;
 
+    //first we load and preprocess the input files
     ParallelPreprocessor preprocessor {params.input_folder};
-
     auto input = std::make_shared<input_data>();
-
     std::cout << TEXT_SEPARATOR << std::endl ;
     preprocessor.load_and_preprocess_folder(input);
     std::cout << TEXT_SEPARATOR << std::endl << std::endl;
-    ParallelCalculationScheduler scheduler(*cl, input, params);
-//    CalculationScheduler scheduler(input, params);
-    genome best_genome{};
 
+
+    input->acc_entries_count -= input->acc_entries_count % cl->work_group_size;
+    input->hr_entries_count -= input->hr_entries_count % cl->work_group_size;
+
+    if(input->acc_entries_count <= 0 || input->hr_entries_count <= 0)
+    {
+        std::cerr << "Not enough data loaded! Terminating application!" << std::endl;
+        exit(0);
+    }
+
+    input->acc_x->values.resize(input->acc_entries_count);
+    input->acc_y->values.resize(input->acc_entries_count);
+    input->acc_z->values.resize(input->acc_entries_count);
+    input->hr->values.resize(input->hr_entries_count);
+
+    //then we put the data to genetic algo
+    ParallelCalculationScheduler scheduler(*cl, input, params);
+    genome best_genome{};
     double max_corr = scheduler.find_transformation_function(best_genome);
+
+    //now dumb the statistics of the best result and plot the correlation into svg
     auto trs_acc = std::make_unique<input_vector>();
     dump_result(best_genome, max_corr);
-
     scheduler.transform(best_genome);
     trs_acc->values = scheduler.transformation_result;
     preprocessor.find_min_max(trs_acc);
@@ -134,15 +150,17 @@ void parallel_run(const input_parameters& params){
 void serial_run(const input_parameters& params){
     Preprocessor preprocessor {params.input_folder};
 
+    //first we load and preprocess the input files
     auto input = std::make_shared<input_data>();
-
     preprocessor.load_and_preprocess_folder(input);
     std::cout << TEXT_SEPARATOR << std::endl << std::endl;
 
+    //then we put the data to genetic algo
     CalculationScheduler scheduler(input, params);
     genome best_genome{};
-
     double max_corr = scheduler.find_transformation_function(best_genome);
+
+    //now dumb the statistics of the best result and plot the correlation into svg
     dump_result(best_genome, max_corr);
     auto trs_acc = std::make_unique<input_vector>();
     scheduler.transform(best_genome);
@@ -160,12 +178,13 @@ inline std::string remove_quotes(const std::string& s) {
     return is_quoted(s) ? s.substr(1, s.size() - 2) : s;
 }
 
-
+/// all possible args input arguments
 std::vector<std::string> possible_input_parameters = {"max_step_count", "population_size", "seed",
                                                       "desired_correlation", "const_scope", "pow_scope",
                                                       "gpu_name", "parallel", "step_info_interval"};
 
 input_parameters map_arguments(std::map<size_t, std::string> &arguments, const std::string &input_folder) {
+    //first get default values
     size_t max_step_count = DEFAULT_MAX_STEP_COUNT;
     size_t population_size = DEFAULT_POPULATION_SIZE;
     size_t seed = time(nullptr);
@@ -181,6 +200,7 @@ input_parameters map_arguments(std::map<size_t, std::string> &arguments, const s
 
     size_t step_info_interval = DEFAULT_STEP_INFO_INTERVAL;
 
+    //check if there are any arguments passed that could override default values
     for (const auto& pair : arguments) {
         switch(pair.first){
             case 0:
@@ -298,7 +318,6 @@ input_parameters parse_arguments(int argc, char *const *argv) {
         std::cout << "Path '" << input_folder << "' does not exist or is not accessible." << std::endl;
         exit(-1);
     }
-
     std::map<size_t, std::string> arguments;
     split_arguments(argc, argv, arguments);
     return map_arguments(arguments, input_folder);

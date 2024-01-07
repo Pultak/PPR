@@ -24,6 +24,7 @@ protected:
 private:
     OpenCLComponent& cl_device;
 
+    /// output vector of the reduce function from gpu device
     std::vector<std::array<std::vector<double>, 3>> sum_reduce_result;
 
 };

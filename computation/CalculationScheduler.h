@@ -33,7 +33,6 @@ inline void print_genome(const genome &best_genome) {
 class CalculationScheduler {
 
 public:
-    bool running = true;
     std::vector<double> transformation_result;
 
 public:
@@ -67,10 +66,21 @@ protected:
 
 protected:
 
+    /// function used to setup the whole calculation at the start of it
     virtual void init_calculation();
 
+    /// Function selects parent from the population vector
+    /// \param vector population vector
+    /// \param last_index last index of parent that was selected
+    /// \return selected parent
     const genome* get_parent(const std::vector<genome> &vector, size_t &last_index);
 
+    /// Function calculates the correlation according to formula
+    /// \param entries_count count of all data entries
+    /// \param acc_sum sum of all transformed acc entries
+    /// \param acc_sum_pow_2 sum of all transformed acc power two entries
+    /// \param hr_acc_sum sum of all transformed acc multiply with hr entries
+    /// \return correlation value 0-1
     [[nodiscard]] double get_abs_correlation_value(double entries_count, double acc_sum,
                                      double acc_sum_pow_2, double hr_acc_sum) const;
 };

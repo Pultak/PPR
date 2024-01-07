@@ -71,7 +71,8 @@ __kernel void FULL_CORRELATION_KERNEL(__constant double *acc_x,
 }
 )";
 
-void OpenCLComponent::init_opencl_device(std::unique_ptr<OpenCLComponent> &cl_device, const std::string& desired_gpu_device) {
+void OpenCLComponent::init_opencl_device(std::unique_ptr<OpenCLComponent> &cl_device,
+                                         const std::string& desired_gpu_device) {
 #if defined(CL_HPP_ENABLE_EXCEPTIONS)
     cl::Program program;
     try {
@@ -79,8 +80,10 @@ void OpenCLComponent::init_opencl_device(std::unique_ptr<OpenCLComponent> &cl_de
 
         auto selected_device = select_gpu(desired_gpu_device);
 
+        //select all needed source codes
         std::vector<std::string> source_codes{full_correlation_kernel_source};
         const cl::Program::Sources& sources(source_codes);
+        // get program interface for sources and device context
         cl::Context device_context = cl::Context(selected_device);
         program = cl::Program(device_context, sources);
 
@@ -96,9 +99,15 @@ void OpenCLComponent::init_opencl_device(std::unique_ptr<OpenCLComponent> &cl_de
         }
         size_t work_group_size = full_correlation_kernel
                                     .getWorkGroupInfo<CL_KERNEL_WORK_GROUP_SIZE>(selected_device);
+        size_t max_work_group_size = selected_device
+                                    .getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>();
 
-        cl_device = std::make_unique<OpenCLComponent>(selected_device, device_context,
-                                                      full_correlation_kernel, work_group_size);
+        std::cout << "Workgroup size: " << work_group_size << std::endl;
+        std::cout << "Max workgroup size: " << max_work_group_size << std::endl;
+
+    	cl_device = std::make_unique<OpenCLComponent>(selected_device, device_context,
+                                                      full_correlation_kernel,
+                                                      max_work_group_size);
 
 #if defined(CL_HPP_ENABLE_EXCEPTIONS)
     } catch (cl::Error &err) {
@@ -263,13 +272,17 @@ void OpenCLComponent::calculate_correlation(const genome &curr_gen, std::array<s
 
     cl::CommandQueue cmd_queue(this->device_context, this->selected_device);
 
-    cl::Buffer out_sum_acc_buff = cl::Buffer(this->device_context, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY,
+    // first init function specific buffers
+    cl::Buffer out_sum_acc_buff = cl::Buffer(this->device_context,
+                                             CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY,
                                         work_groups_count * sizeof(double), nullptr);
 
-    cl::Buffer out_sum_acc2_buff = cl::Buffer(this->device_context, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY,
+    cl::Buffer out_sum_acc2_buff = cl::Buffer(this->device_context,
+                                              CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY,
                                          work_groups_count * sizeof(double), nullptr);
 
-    cl::Buffer out_sum_acc_hr_buff = cl::Buffer(this->device_context, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY,
+    cl::Buffer out_sum_acc_hr_buff = cl::Buffer(this->device_context,
+                                                CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY,
                                            work_groups_count * sizeof(double), nullptr);
 
     auto constants = cl::Buffer(this->device_context,
@@ -282,6 +295,7 @@ void OpenCLComponent::calculate_correlation(const genome &curr_gen, std::array<s
                              GENOME_POW_SIZE * sizeof(uint8_t),
                              const_cast<unsigned char *>(curr_gen.powers.data()));
 
+    //assign to kernel arguments
     this->full_corr_kernel.setArg(4, constants);
     this->full_corr_kernel.setArg(5, powers);
 
@@ -292,15 +306,13 @@ void OpenCLComponent::calculate_correlation(const genome &curr_gen, std::array<s
     this->full_corr_kernel.setArg(9, out_sum_acc_buff);
     this->full_corr_kernel.setArg(10, out_sum_acc2_buff);
     this->full_corr_kernel.setArg(11, out_sum_acc_hr_buff);
-
-
+    
     // Create a command queue to communicate with the OpenCL device.
     cmd_queue.enqueueNDRangeKernel(this->full_corr_kernel, cl::NullRange,
                                     cl::NDRange(entries_count),
-                                    cl::NDRange(this->work_group_size),
+									cl::NDRange(this->work_group_size),
                                    nullptr, &corr_kernel_event);
 
-//    corr_kernel_event.wait();
     // Read the results from the OpenCL device.
     cmd_queue.enqueueReadBuffer(out_sum_acc_buff, CL_FALSE, 0,
                                  work_groups_count * sizeof(double), out_sums[0].data());
@@ -308,7 +320,6 @@ void OpenCLComponent::calculate_correlation(const genome &curr_gen, std::array<s
                                  work_groups_count * sizeof(double), out_sums[1].data());
     cmd_queue.enqueueReadBuffer(out_sum_acc_hr_buff, CL_FALSE, 0,
                                  work_groups_count * sizeof(double), out_sums[2].data());
-//
 }
 
 void OpenCLComponent::init_static_buffers(const std::shared_ptr<input_data> &input, size_t numbers_bytes_size,

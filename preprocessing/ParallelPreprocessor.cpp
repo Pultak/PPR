@@ -29,6 +29,7 @@ void ParallelPreprocessor::load_acc_file_content(const std::shared_ptr<input_dat
                                               acc_minute_sample(sampling_rate));
     uint8_t sample_count = 0;
     size_t entry_count = 0;
+    //first load all lines into buffers
     do{
         all_lines[entry_count].lines[sample_count] = line;
         ++sample_count;
@@ -80,7 +81,7 @@ void ParallelPreprocessor::norm_input_vector(const std::unique_ptr<input_vector>
     auto& arr = input->values;
     const size_t count = arr.size();
     const auto scope = (max - min);
-#pragma loop(hint_parallel(VECTOR_SIZE_MACRO))
+    #pragma loop(hint_parallel(VECTOR_SIZE_MACRO))
     for(size_t i = 0; i < count; ++i){
         auto value = arr[i];
         arr[i] = (value - min) / scope;
@@ -89,13 +90,15 @@ void ParallelPreprocessor::norm_input_vector(const std::unique_ptr<input_vector>
 
 void ParallelPreprocessor::find_min_max(const std::unique_ptr<input_vector> &input) const {
     const auto values = input->values;
-    const auto [min, max] = std::minmax_element(values.begin(), values.end());
+    const auto [min, max]
+                                    = std::minmax_element(values.begin(), values.end());
 
     input->min = *min;
     input->max = *max;
 }
 
-void ParallelPreprocessor::preprocess_vectors(const std::shared_ptr<input_data> &result, size_t current_offset) const {
+void ParallelPreprocessor::preprocess_acc_vectors(const std::shared_ptr<input_data> &result,
+                                                  size_t current_offset) const {
     auto& x_input = result->acc_x->values;
     auto& y_input = result->acc_y->values;
     auto& z_input = result->acc_z->values;

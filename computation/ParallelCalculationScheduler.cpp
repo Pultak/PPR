@@ -20,14 +20,6 @@ void ParallelCalculationScheduler::init_calculation() {
     const size_t work_groups_count = ceil((double)entries_count
                                           / (double)this->cl_device.work_group_size);
 
-    std::vector<std::array<std::vector<double>, 3>> sum_reduce_res(
-            this->input_params.population_size,
-            {std::vector<double>(work_groups_count),
-                 std::vector<double>(work_groups_count),
-                 std::vector<double>(work_groups_count)
-                }
-    );
-
     this->sum_reduce_result = {this->input_params.population_size,
                               {std::vector<double>(work_groups_count),
                                std::vector<double>(work_groups_count),
@@ -49,8 +41,11 @@ double ParallelCalculationScheduler::check_correlation(const std::vector<genome>
 #if defined(CL_HPP_ENABLE_EXCEPTIONS)
     try{
 #endif
+        //check if buffers are already initialized
         cl_device.init_static_buffers(input, numbers_bytes_size, work_groups_count);
+        //first assign the jobs to gpu queue
         for(const auto& curr_gen: population) {
+            //every genome has its on result buffers for sum reduce
             auto& result = this->sum_reduce_result[gen_index];
             cl_device.calculate_correlation(curr_gen, result,
                                             entries_count, work_groups_count, synch_events[gen_index]);
@@ -60,9 +55,12 @@ double ParallelCalculationScheduler::check_correlation(const std::vector<genome>
         synch_events[gen_index - 1].wait();
         gen_index = 0;
 
+        //now for every sum reduce calculate correlation
         for(auto& [out_acc, out_acc2, out_acc_hr]: this->sum_reduce_result){
             double acc_sum = 0, acc_sum_pow_2 = 0, hr_acc_sum = 0;
 
+            // sum the partial sums
+            #pragma loop(hint_parallel(VECTOR_SIZE_MACRO))
             for(size_t i = 0; i < work_groups_count; ++i){
                 acc_sum += out_acc[i];
                 acc_sum_pow_2 += out_acc2[i];

@@ -14,6 +14,7 @@
 #define VECTOR_SIZE_MACRO 16
 
 #define DEFAULT_MAX_STEP_COUNT 10
+
 #define DEFAULT_POPULATION_SIZE 100
 
 #define DEFAULT_DESIRED_CORRELATION 0.9
@@ -60,7 +61,6 @@ struct input_parameters{
     const size_t seed = DEFAULT_SEED;
 
     const double desired_correlation = DEFAULT_DESIRED_CORRELATION;
-
     const double const_scope = DEFAULT_CONST_SCOPE;
     const int pow_scope = DEFAULT_POW_SCOPE;
 

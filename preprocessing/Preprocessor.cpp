@@ -16,7 +16,8 @@
 
 
 bool Preprocessor::load_and_preprocess(std::string &hr_file, std::string &acc_file,
-                                       const std::shared_ptr<input_data> &result, const std::string &folder_name) const {
+                                       const std::shared_ptr<input_data> &result,
+                                       const std::string &folder_name) const {
 
     bool files_ok = analyze_files(hr_file, acc_file, result);
     if(!files_ok){
@@ -30,11 +31,11 @@ bool Preprocessor::load_and_preprocess(std::string &hr_file, std::string &acc_fi
     process_file_content(hr_file, false, result);
     process_file_content(acc_file, true, result);
 
-    preprocess_vectors(result, current_offset);
+    preprocess_acc_vectors(result, current_offset);
     return true;
 }
 
-void Preprocessor::preprocess_vectors(const std::shared_ptr<input_data> &result, size_t current_offset) const {
+void Preprocessor::preprocess_acc_vectors(const std::shared_ptr<input_data> &result, size_t current_offset) const {
     auto& x_input = result->acc_x->values;
     auto& y_input = result->acc_y->values;
     auto& z_input = result->acc_z->values;
@@ -60,22 +61,26 @@ bool Preprocessor::load_and_preprocess_folder(const std::shared_ptr<input_data> 
     collect_directory_data_files_entries(directories);
     std::cout << "Loaded total of " << directories.size() << " directories!" << std::endl;
 
+    //init all vectors according to all files size
     result->hr = std::make_unique<input_vector>(this->total_predicted_input_size);
     result->acc_x = std::make_unique<input_vector>(this->total_predicted_input_size);
     result->acc_y = std::make_unique<input_vector>(this->total_predicted_input_size);
     result->acc_z = std::make_unique<input_vector>(this->total_predicted_input_size);
+
     for (const auto& data_entry: directories) {
         std::string hr_file = data_entry.second.first;
         std::string acc_file = data_entry.second.second;
+        //preprocess hr and acc file pair and save to vectors
         if(!load_and_preprocess(hr_file, acc_file, result, data_entry.first)){
             return false;
         }
     }
 
     __int64 elapsed = time_call([&] {
+        //after all files are loaded normalization is done + calculate sums that can be calculated one time
         calculate_hr_init_data(result);
 
-        normalize_data(result);
+        post_process(result);
     });
     std::cout << "Normalization of input data took " << elapsed << " ms" << std::endl;
 
@@ -93,7 +98,7 @@ void Preprocessor::print_input_data_statistics(const std::shared_ptr<input_data>
     std::cout << "Statistics after data load:" << std::endl;
     std::cout << "Entries count: " << result->hr_entries_count << std::endl;
     std::cout << "HR sum: " << result->hr_sum << std::endl;
-    std::cout << "HR squared sum: " << result->hr_sum << std::endl;
+    std::cout << "HR squared sum: " << result->squared_hr_corr_sum << std::endl;
     std::cout << "HR min/max: " << result->hr->min << "/" << result->hr->max << std::endl;
     std::cout << "ACCX min/max: " << result->acc_x->min << "/" << result->acc_x->max << std::endl;
     std::cout << "ACCY min/max: " << result->acc_y->min << "/" << result->acc_y->max << std::endl;
@@ -111,19 +116,17 @@ file_type is_data_file(const std::string& file_name){
 }
 
 void Preprocessor::collect_directory_data_files_entries(directory_map& folder_map) {
-    std::stack<std::filesystem::path> pathStack;
-    pathStack.emplace(this->input_folder);
+    std::stack<std::filesystem::path> path_stack;
+    path_stack.emplace(this->input_folder);
 
-    while (!pathStack.empty()) {
-        std::filesystem::path currentPath = pathStack.top();
-        pathStack.pop();
+    while (!path_stack.empty()) {
+        std::filesystem::path currentPath = path_stack.top();
+        path_stack.pop();
 
         for (const auto& entry: std::filesystem::directory_iterator(currentPath)) {
             if (entry.is_directory()) {
-//                std::cout << "Folder: " << entry.path() << "\n"; //todo comment
-                pathStack.push(entry.path());
+                path_stack.push(entry.path());
             } else if (entry.is_regular_file()) {
-//                std::cout << "File: " << entry.path() << "\n";
                 const auto& file_path = entry.path();
                 auto parent_folder_name = file_path.parent_path().filename().string();
                 auto file_type = is_data_file(file_path.filename().string());
@@ -276,7 +279,7 @@ inline void Preprocessor::norm_input_vector(const std::unique_ptr<input_vector>&
     }
 }
 
-void Preprocessor::normalize_data(const std::shared_ptr<input_data> &data) const {
+void Preprocessor::post_process(const std::shared_ptr<input_data> &data) const {
     find_min_max(data->acc_x);
     find_min_max(data->acc_y);
     find_min_max(data->acc_z);
@@ -317,6 +320,7 @@ bool Preprocessor::analyze_files(const std::string &hr_file, const std::string &
     if (afile.is_open()) {
         std::string line;
 
+        //we need to get sampling rate to possibly pair with heart rate
         uint8_t sampling_rate = 1;
         result->first_acc_time = get_first_entry_date(afile, line, result->acc_date_end_index);
 
