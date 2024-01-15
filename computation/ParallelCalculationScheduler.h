@@ -19,7 +19,7 @@ protected:
 
     void init_calculation() override;
 
-    double check_correlation(const std::vector<genome>& population, size_t &best_index) override;
+    double transform_and_correlation(const std::vector<genome>& population, size_t &best_index) override;
 
 private:
     OpenCLComponent& cl_device;

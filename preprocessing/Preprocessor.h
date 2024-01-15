@@ -33,12 +33,17 @@ struct input_data{
     std::unique_ptr<input_vector> acc_z = nullptr;
     std::unique_ptr<input_vector> hr = nullptr;
 
+    /// count of hr entries needed for calculating offset etc
     size_t hr_entries_count = 0;
     size_t acc_entries_count = 0;
 
+    /// date time of the first entry in current hr file
     time_t first_hr_time = 0;
+    /// date time of the first entry in current acc file
     time_t first_acc_time = 0;
+    /// sampling rate of the current acc file
     uint8_t sampling_rate = 0;
+    /// index of the date time separator
     size_t hr_date_end_index = 0;
     size_t acc_date_end_index = 0;
 

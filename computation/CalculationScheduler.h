@@ -44,10 +44,12 @@ public:
 
     void init_population(std::vector<genome>& init_population) const;
 
-    virtual double check_correlation(const std::vector<genome>& population, size_t &best_index);
+    virtual double transform_and_correlation(const std::vector<genome>& population, size_t &best_index);
 
     void repopulate(const std::vector<genome>& old_population, std::vector<genome>& new_population,
                                    genome& best_genome);
+
+    void mutate(std::vector<genome>& new_population);
 
     void transform(const genome& genome1);
 
@@ -59,7 +61,7 @@ protected:
     const double hr_sum = 0;
     const double squared_hr_corr_sum = 0;
 
-    std::mt19937 corr_value_generator;
+    std::mt19937 mt19937_generator;
     std::uniform_real_distribution<> corr_uniform_real_distribution{0, 0.1};
 
     const input_parameters input_params;
@@ -81,8 +83,8 @@ protected:
     /// \param acc_sum_pow_2 sum of all transformed acc power two entries
     /// \param hr_acc_sum sum of all transformed acc multiply with hr entries
     /// \return correlation value 0-1
-    [[nodiscard]] double get_abs_correlation_value(double entries_count, double acc_sum,
-                                     double acc_sum_pow_2, double hr_acc_sum) const;
+    [[nodiscard]] double get_abs_correlation_coefficient(double entries_count, double acc_sum,
+                                                         double acc_sum_pow_2, double hr_acc_sum) const;
 };
 
 

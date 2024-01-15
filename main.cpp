@@ -11,6 +11,9 @@
 #include "computation/ParallelCalculationScheduler.h"
 
 
+void init_svg_header(std::ofstream &svgFile, double hr_min, double hr_max, double min_acc,
+                     double max_acc);
+
 int createSVG(std::unique_ptr<input_vector>& hr, std::unique_ptr<input_vector>& trs_acc){
     // Open an output file for writing
     std::ofstream svgFile("graph.svg");
@@ -25,30 +28,7 @@ int createSVG(std::unique_ptr<input_vector>& hr, std::unique_ptr<input_vector>& 
     const double hr_max = hr->max;
     const double min_acc = trs_acc->min;
     const double max_acc = trs_acc->max;
-
-    // Write the SVG header
-    svgFile << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n";
-    svgFile << "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" ";
-    svgFile << "\"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n";
-    svgFile << "<svg fill=\"#000000\" width=\"1000\" height=\"1000\" xmlns=\"http://www.w3.org/2000/svg\">\n";
-
-    svgFile << "<!-- y axis -->\n";
-    svgFile << "<line x1=\"25\" y1=\"0\" x2=\"25\" y2=\"975\" stroke=\"black\"></line>\n";
-    svgFile << "<line x1=\"25\" y1=\"0\" x2=\"20\" y2=\"20\" stroke=\"black\"></line>\n";
-    svgFile << "<line x1=\"25\" y1=\"0\" x2=\"30\" y2=\"20\" stroke=\"black\"></line>\n";
-
-    svgFile << "<text class=\"heavy\" transform=\"translate(20,550) rotate(-90)\">HeartRate</text>\n";
-    svgFile << "<text class=\"heavy\" transform=\"translate(20,970) rotate(-90)\">" << hr_min << "</text>\n";
-    svgFile << "<text class=\"heavy\" transform=\"translate(20,50) rotate(-90)\">" << hr_max << "</text>\n";
-
-    svgFile << "<!-- x axis -->\n";
-    svgFile << "<line x1=\"25\" y1=\"975\" x2=\"1000\" y2=\"975\" stroke=\"black\"></line>\n";
-    svgFile << "<line x1=\"980\" y1=\"970\" x2=\"1000\" y2=\"975\" stroke=\"black\"></line>\n";
-    svgFile << "<line x1=\"980\" y1=\"980\" x2=\"1000\" y2=\"975\" stroke=\"black\"></line>\n";
-
-    svgFile << "<text x=\"450\" y=\"990\" class=\"heavy\">Transformed accelerator</text>\n";
-    svgFile << R"(<text x="25" y="990" class="heavy">)" << min_acc << "</text>\n";
-    svgFile << R"(<text x="930" y="990" class="heavy">)" << max_acc << "</text>\n";
+    init_svg_header(svgFile, hr_min, hr_max, min_acc, max_acc);
 
     svgFile << "<!-- data -->\n";
 
@@ -94,6 +74,32 @@ int createSVG(std::unique_ptr<input_vector>& hr, std::unique_ptr<input_vector>& 
     return 0;
 }
 
+void init_svg_header(std::ofstream &svgFile, const double hr_min, const double hr_max, const double min_acc,
+                     const double max_acc) {// Write the SVG header
+    svgFile << "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n";
+    svgFile << "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" ";
+    svgFile << "\"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n";
+    svgFile << "<svg fill=\"#000000\" width=\"1000\" height=\"1000\" xmlns=\"http://www.w3.org/2000/svg\">\n";
+
+    svgFile << "<!-- y axis -->\n";
+    svgFile << "<line x1=\"25\" y1=\"0\" x2=\"25\" y2=\"975\" stroke=\"black\"></line>\n";
+    svgFile << "<line x1=\"25\" y1=\"0\" x2=\"20\" y2=\"20\" stroke=\"black\"></line>\n";
+    svgFile << "<line x1=\"25\" y1=\"0\" x2=\"30\" y2=\"20\" stroke=\"black\"></line>\n";
+
+    svgFile << "<text class=\"heavy\" transform=\"translate(20,550) rotate(-90)\">HeartRate</text>\n";
+    svgFile << "<text class=\"heavy\" transform=\"translate(20,970) rotate(-90)\">" << hr_min << "</text>\n";
+    svgFile << "<text class=\"heavy\" transform=\"translate(20,50) rotate(-90)\">" << hr_max << "</text>\n";
+
+    svgFile << "<!-- x axis -->\n";
+    svgFile << "<line x1=\"25\" y1=\"975\" x2=\"1000\" y2=\"975\" stroke=\"black\"></line>\n";
+    svgFile << "<line x1=\"980\" y1=\"970\" x2=\"1000\" y2=\"975\" stroke=\"black\"></line>\n";
+    svgFile << "<line x1=\"980\" y1=\"980\" x2=\"1000\" y2=\"975\" stroke=\"black\"></line>\n";
+
+    svgFile << "<text x=\"450\" y=\"990\" class=\"heavy\">Transformed accelerator</text>\n";
+    svgFile << R"(<text x="25" y="990" class="heavy">)" << min_acc << "</text>\n";
+    svgFile << R"(<text x="930" y="990" class="heavy">)" << max_acc << "</text>\n";
+}
+
 void dump_result(const genome& best_genome, const double max_corr){
     std::cout << "_________________________________" << std::endl;
     std::cout << "The best correlation found: " << max_corr << std::endl;
@@ -122,10 +128,9 @@ void parallel_run(const input_parameters& params){
     input->acc_entries_count -= input->acc_entries_count % cl->work_group_size;
     input->hr_entries_count -= input->hr_entries_count % cl->work_group_size;
 
-    if(input->acc_entries_count <= 0 || input->hr_entries_count <= 0)
-    {
+    if(input->acc_entries_count <= 0 || input->hr_entries_count <= 0){
         std::cerr << "Not enough data loaded! Terminating application!" << std::endl;
-        exit(0);
+        exit(1);
     }
 
     input->acc_x->values.resize(input->acc_entries_count);
@@ -154,6 +159,11 @@ void serial_run(const input_parameters& params){
     auto input = std::make_shared<input_data>();
     preprocessor.load_and_preprocess_folder(input);
     std::cout << TEXT_SEPARATOR << std::endl << std::endl;
+
+    if(input->acc_entries_count <= 0 || input->hr_entries_count <= 0){
+        std::cerr << "Not enough data loaded! Terminating application!" << std::endl;
+        exit(1);
+    }
 
     //then we put the data to genetic algo
     CalculationScheduler scheduler(input, params);
@@ -226,12 +236,20 @@ input_parameters map_arguments(std::map<size_t, std::string> &arguments, const s
                 break;
             case 4:
                 const_scope = abs(std::stoi(pair.second));
+                if(const_scope > 10000 || const_scope < -10000){
+                    std::cerr << "The value you passed for const scope is too great. "
+                                 "The calculated sums will probably overflow." << std::endl;
+                    exit(-1);
+                }
                 break;
             case 5:
                 pow_scope = abs(std::stoi(pair.second));
                 if(pow_scope > 5){
                     std::cerr << "The value you passed for power scope is too great. "
                                  "The calculated sums will probably overflow." << std::endl;
+                    exit(-1);
+                }else if(pow_scope < 1){
+                    std::cerr << "The value you passed for power scope is small. " << std::endl;
                     exit(-1);
                 }
                 break;
@@ -257,17 +275,15 @@ void print_help_message() {
     std::cout << "application.exe <input_folder>" << std::endl;
 
     std::cout << "Possible parameters:" << std::endl;
-    std::cout << "-max_step_count \"<value>\"" << std::endl;
-    std::cout << "-population_size \"<value>\"" << std::endl;
-    std::cout << "-seed \"<value>\"" << std::endl;
-    std::cout << "-desired_correlation \"<value>\"" << std::endl;
-    std::cout << "-const_scope \"<value>\"" << std::endl;
-    std::cout << "-pow_scope \"<value>\"" << std::endl;
-    std::cout << "-gpu_name \"<value>\"" << std::endl;
-    std::cout << "-step_info_interval \"<value>\"" << std::endl;
+    for (const auto& parameter: possible_input_parameters) {
+        if(parameter == "parallel"){
+            continue;
+        }
+        std::cout << "\t-" << parameter << " \"<value>\"" << std::endl;
+    }
 
     std::cout << "Possible flags:" << std::endl;
-    std::cout << "-parallel" << std::endl;
+    std::cout << "\t-parallel" << std::endl;
 
     std::cout << "More information can be found in documentation." << std::endl;
 }

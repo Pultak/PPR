@@ -93,6 +93,8 @@ struct input_parameters{
         std::cout << "Pow_scope: " << pow_scope << std::endl;
         std::cout << "Gpu_name: " << desired_gpu_name << std::endl;
         std::cout << "Parallel: " << parallel << std::endl;
+        std::cout << "Input_folder: " << input_folder << std::endl;
+        std::cout << "Step_info_interval: " << step_info_interval << std::endl;
         std::cout << TEXT_SEPARATOR << std::endl;
     }
 };

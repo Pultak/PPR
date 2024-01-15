@@ -60,6 +60,9 @@ bool Preprocessor::load_and_preprocess_folder(const std::shared_ptr<input_data> 
     directory_map directories {};
     collect_directory_data_files_entries(directories);
     std::cout << "Loaded total of " << directories.size() << " directories!" << std::endl;
+    if(directories.empty()){
+        return false;
+    }
 
     //init all vectors according to all files size
     result->hr = std::make_unique<input_vector>(this->total_predicted_input_size);
@@ -74,6 +77,10 @@ bool Preprocessor::load_and_preprocess_folder(const std::shared_ptr<input_data> 
         if(!load_and_preprocess(hr_file, acc_file, result, data_entry.first)){
             return false;
         }
+    }
+
+    if(result->hr_entries_count <= 0){
+        return false;
     }
 
     __int64 elapsed = time_call([&] {

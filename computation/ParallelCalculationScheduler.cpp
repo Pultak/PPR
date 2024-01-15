@@ -28,7 +28,7 @@ void ParallelCalculationScheduler::init_calculation() {
 }
 
 
-double ParallelCalculationScheduler::check_correlation(const std::vector<genome>& population, size_t &best_index) {
+double ParallelCalculationScheduler::transform_and_correlation(const std::vector<genome>& population, size_t &best_index) {
 
     const cl::size_type numbers_bytes_size = sizeof(double) * input->hr_entries_count;
     const size_t entries_count = this->input->hr_entries_count;
@@ -67,16 +67,13 @@ double ParallelCalculationScheduler::check_correlation(const std::vector<genome>
                 hr_acc_sum += out_acc_hr[i];
             }
 
-            double corr_abs = this->get_abs_correlation_value(static_cast<double>(entries_count),
-                                                              acc_sum, acc_sum_pow_2, hr_acc_sum);
+            double corr_abs = this->get_abs_correlation_coefficient(static_cast<double>(entries_count),
+                                                                    acc_sum, acc_sum_pow_2, hr_acc_sum);
             if(corr_abs > best_corr){
                 best_corr = corr_abs;
                 best_index = gen_index;
             }
             this->corr_result[gen_index] = corr_abs;
-            if(gen_index < 15){
-                std::cout << corr_abs << std::endl; //todo remove
-            }
             ++gen_index;
         }
 

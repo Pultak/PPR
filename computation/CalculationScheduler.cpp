@@ -9,12 +9,12 @@
 
 CalculationScheduler::CalculationScheduler(const std::shared_ptr<input_data>& input,
                                            const input_parameters& input_params):
-                                           input(input), input_params(input_params),
-                                           corr_value_generator(input_params.seed),
-                                           transformation_result(input->acc_entries_count),
-                                           corr_result(input_params.population_size),
-                                           hr_sum(input->hr_sum),
-                                           squared_hr_corr_sum(input->squared_hr_corr_sum){
+        input(input), input_params(input_params),
+        mt19937_generator(input_params.seed),
+        transformation_result(input->acc_entries_count),
+        corr_result(input_params.population_size),
+        hr_sum(input->hr_sum),
+        squared_hr_corr_sum(input->squared_hr_corr_sum){
 
 }
 
@@ -33,7 +33,7 @@ double CalculationScheduler::find_transformation_function(genome& best_genome) {
     std::cout << "Initialization of first population took " << elapsed << " ms" << std::endl;
 
     uint32_t step_done_count = 0;
-    double max_corr = 0;
+    double best_corr = 0;
     size_t best_index = 0;
     const auto desired_corr = this->input_params.desired_correlation;
 
@@ -41,17 +41,17 @@ double CalculationScheduler::find_transformation_function(genome& best_genome) {
     while(step_done_count < this->input_params.max_step_count){
 
         elapsed = time_call([&] {
-            max_corr = check_correlation(curr_population, best_index);
+            best_corr = transform_and_correlation(curr_population, best_index);
         });
         std::cout << "Transform and correlation calculation took " << elapsed << " ms" << std::endl;
 
-        if(max_corr > desired_corr){
-            std::cout << "Maximal (desired) correlation threshold reached (" << max_corr << ">" << desired_corr
-                        << ")! Stopping at " << step_done_count << "th step!" << std::endl;
+        if(best_corr > desired_corr){
+            std::cout << "Maximal (desired) correlation threshold reached (" << best_corr << ">" << desired_corr
+                      << ")! Stopping at " << step_done_count << "th step!" << std::endl;
             break;
         }
         if(step_done_count % this->input_params.step_info_interval == 0){
-            std::cout << step_done_count + 1 << "th step was done. Current best correlation: " << max_corr << std::endl;
+            std::cout << step_done_count + 1 << "th step was done. Current best correlation: " << best_corr << std::endl;
             print_genome(curr_population[best_index]);
         }
 
@@ -69,7 +69,7 @@ double CalculationScheduler::find_transformation_function(genome& best_genome) {
         ++step_done_count;
     }
     std::memcpy(&best_genome, &curr_population[best_index], sizeof(genome));
-    return max_corr;
+    return best_corr;
 }
 
 void CalculationScheduler::init_population(std::vector<genome>& init_population) const {
@@ -96,7 +96,7 @@ void CalculationScheduler::init_population(std::vector<genome>& init_population)
     }
 }
 
-double CalculationScheduler::check_correlation(const std::vector<genome>& population, size_t &best_index) {
+double CalculationScheduler::transform_and_correlation(const std::vector<genome>& population, size_t &best_index) {
 
     double best_corr = 0;
     size_t gen_index = 0;
@@ -118,7 +118,7 @@ double CalculationScheduler::check_correlation(const std::vector<genome>& popula
         }
 
         //correlation in abs so that we have easier fitness function validation
-        double corr_abs = get_abs_correlation_value(entries_count, acc_sum, acc_sum_pow_2, hr_acc_sum);
+        double corr_abs = get_abs_correlation_coefficient(entries_count, acc_sum, acc_sum_pow_2, hr_acc_sum);
 
         if(best_index != gen_index && corr_abs > best_corr){
             best_corr = corr_abs;
@@ -130,8 +130,8 @@ double CalculationScheduler::check_correlation(const std::vector<genome>& popula
     return best_corr;
 }
 
-double CalculationScheduler::get_abs_correlation_value(const double entries_count, double acc_sum, double acc_sum_pow_2,
-                                                       double hr_acc_sum) const {
+double CalculationScheduler::get_abs_correlation_coefficient(const double entries_count, double acc_sum, double acc_sum_pow_2,
+                                                             double hr_acc_sum) const {
     auto divident = (entries_count * hr_acc_sum) - (hr_sum * acc_sum);
 
     auto divisor1 = sqrt(squared_hr_corr_sum);
@@ -165,6 +165,7 @@ void CalculationScheduler::repopulate(const std::vector<genome>& old_population,
                     &parent2->constants, GENOME_POW_SIZE * sizeof(double));
         ++current_index;
     }
+    mutate(new_population);
 }
 
 void CalculationScheduler::transform(const genome& current_genome) {
@@ -190,7 +191,7 @@ void CalculationScheduler::transform(const genome& current_genome) {
 const genome* CalculationScheduler::get_parent(const std::vector<genome> &vector, size_t &last_index) {
 
     const auto population_size = this->input_params.population_size;
-    double corr_needed = this->corr_uniform_real_distribution(this->corr_value_generator);
+    double corr_needed = this->corr_uniform_real_distribution(this->mt19937_generator);
     double curr_corr_sum = 0;
     while(curr_corr_sum < corr_needed){
         ++last_index;
@@ -205,4 +206,30 @@ const genome* CalculationScheduler::get_parent(const std::vector<genome> &vector
 
 void CalculationScheduler::init_calculation() {
 
+}
+
+void CalculationScheduler::mutate(std::vector<genome> &new_population) {
+
+    const double mutate_scope = this->input_params.const_scope * 0.01; //we want only 1% of the original
+
+    std::uniform_real_distribution<> uniformRealDistribution(-mutate_scope,
+                                                             mutate_scope); // define the range
+    std::uniform_int_distribution<> uniformIntDistribution(1,
+                                                           this->input_params.pow_scope); // define the range
+
+    std::uniform_int_distribution<> mutateIndexUniformIntDistribution(1,7);
+
+    const auto count = this->input_params.population_size;
+
+    for (int i = 1; i < count; ++i) {
+        auto index = mutateIndexUniformIntDistribution(this->mt19937_generator);
+        auto& gen = new_population[i];
+        if(index > 4){
+            index -= 4;
+            gen.powers[index] = uniformIntDistribution(this->mt19937_generator);
+        }else{
+            const auto added_scope = uniformRealDistribution(this->mt19937_generator);
+            gen.constants[index] += added_scope;
+        }
+    }
 }
